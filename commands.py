@@ -1,0 +1,472 @@
+"""
+IRIS AI Command Processor & Skill Routing Module
+Connects user messages to Groq LLM reasoning engine, Windows Automation Engine, and slash command execution matrix.
+"""
+
+import sys
+import os
+import time
+import math
+import psutil
+import platform
+from datetime import datetime
+from rich.table import Table
+from rich.panel import Panel
+from rich.console import Console
+
+import config
+import banner
+import ui
+from llm_engine import llm_engine
+from voice_engine import voice_engine
+from automation_engine import automation_engine, extract_action_intent
+from debug_logger import debug_log, log_exception
+
+console = Console()
+
+
+class CommandProcessor:
+    def __init__(self, cli_app):
+        self.cli = cli_app
+        self.history = []
+        self.chat_history = []
+        self.pending_action = None
+
+    def process(self, user_input: str) -> bool:
+        """
+        Processes command or LLM query.
+        Returns False if application should exit, True otherwise.
+        """
+        user_input = user_input.strip()
+        if not user_input:
+            return True
+
+        self.history.append(user_input)
+        cmd_lower = user_input.lower()
+
+        # Handle pending stateful conversational confirmation
+        if self.pending_action:
+            action_data = self.pending_action
+            if any(w in cmd_lower for w in ["yes", "yep", "yeah", "send it", "send", "do it", "go ahead", "sure", "ok", "okay", "confirm"]) or cmd_lower in ["y", "yes"]:
+                self.pending_action = None
+                exec_result = automation_engine.execute_action(action_data, confirmed=True)
+                
+                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                accent = t["accent"]
+                
+                act_name = action_data.get("action", "")
+                if act_name == "send_message":
+                    recip = action_data.get("recipient") or action_data.get("to") or "contact"
+                    reply_msg = f"Done! Your message has been sent to {recip}."
+                else:
+                    reply_msg = f"Done! {exec_result.get('details', 'Action completed.')}"
+
+                console.print(f"[{accent}]IRIS AI >[/{accent}]")
+                console.print(reply_msg)
+                console.print()
+                voice_engine.speak(reply_msg)
+                return True
+
+            elif any(w in cmd_lower for w in ["no", "nope", "cancel", "don't send", "dont send", "stop", "abort"]) or cmd_lower in ["n", "no"]:
+                self.pending_action = None
+                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                accent = t["accent"]
+                
+                act_name = action_data.get("action", "")
+                cancel_msg = "Okay, I won't send it." if act_name == "send_message" else "Okay, action cancelled as requested."
+                
+                console.print(f"[{accent}]IRIS AI >[/{accent}]")
+                console.print(cancel_msg)
+                console.print()
+                voice_engine.speak(cancel_msg)
+                return True
+
+            else:
+                self.pending_action = None
+
+        # Route slash commands
+        if cmd_lower in ["/exit", "/quit", "exit", "quit", "bye"]:
+            return self.cmd_exit()
+
+        elif cmd_lower in ["/clear", "/cls", "clear", "cls"]:
+            return self.cmd_clear()
+
+        elif cmd_lower in ["/help", "help", "?"]:
+            return self.cmd_help()
+
+        elif cmd_lower in ["/status", "/sys", "/sysinfo", "status", "sysinfo"]:
+            return self.cmd_status()
+
+        elif cmd_lower in ["/voice", "voice"]:
+            return self.cmd_voice()
+
+        elif cmd_lower in ["/actions", "/automation", "automation"]:
+            return self.cmd_automation()
+
+        elif cmd_lower in ["/timers", "/tasks", "/schedule", "timers", "tasks", "schedule"]:
+            return self.cmd_schedule()
+
+        elif cmd_lower.startswith("/canceltimer") or cmd_lower.startswith("/canceltask"):
+            return self.cmd_canceltimer(user_input)
+
+        elif cmd_lower in ["/matrix", "matrix"]:
+            return self.cmd_matrix()
+
+        elif cmd_lower.startswith("/theme"):
+            return self.cmd_theme(user_input)
+
+        elif cmd_lower.startswith("/calc"):
+            return self.cmd_calc(user_input)
+
+        elif cmd_lower in ["/time", "/clock", "time", "clock"]:
+            return self.cmd_time()
+
+        elif cmd_lower in ["/history", "history"]:
+            return self.cmd_history()
+
+        elif cmd_lower in ["/about", "about"]:
+            return self.cmd_about()
+
+        elif cmd_lower in ["/debug", "/dev"]:
+            return self.cmd_debug()
+
+        elif cmd_lower.startswith("/"):
+            ui.print_error(f"Unknown command '{user_input}'. Type [bold white]/help[/bold white] for command matrix.")
+            return True
+
+        else:
+            # Send query to Groq LLM Engine and Windows Automation Engine
+            self.process_groq_llm_query(user_input)
+            return True
+
+    def cmd_debug(self):
+        config.DEBUG_MODE = not config.DEBUG_MODE
+        mode_str = "[bold green]ENABLED[/bold green]" if config.DEBUG_MODE else "[bold yellow]DISABLED[/bold yellow]"
+        console.print(f"[dim cyan]● Developer Debug Mode {mode_str}[/dim cyan]\n")
+        return True
+
+    def cmd_exit(self):
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        console.print(f"\n[{t['accent']}][::] Powering down IRIS AI systems... Farewell. [::][/{t['accent']}]\n")
+        voice_engine.stop_speech()
+        return False
+
+    def cmd_clear(self):
+        console.clear()
+        banner.render_banner(theme_key=self.cli.current_theme, animate=False)
+        return True
+
+    def cmd_help(self):
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        accent = t["accent"]
+
+        table = Table(title="[bold cyan][::] IRIS AI COMMAND MATRIX [::][/bold cyan]", border_style=t["border"])
+        table.add_column("Command", style=f"bold {accent}", no_wrap=True)
+        table.add_column("Description", style="white")
+
+        table.add_row("/help", "Display this command matrix overview.")
+        table.add_row("/debug", "Toggle developer debug mode (live telemetry logs).")
+        table.add_row("/automation, /actions", "View desktop automation handlers & capabilities.")
+        table.add_row("/timers, /tasks", "View active timers and background scheduled tasks.")
+        table.add_row("/canceltimer [id]", "Cancel a running timer or task (or 'all').")
+        table.add_row("/status, /sys", "Show live CPU, RAM, and System telemetry dashboard.")
+        table.add_row("/voice", "Check local voice-cloning status and reference audio file.")
+        table.add_row("/matrix", "Launch digital rain cyber visualizer.")
+        table.add_row("/theme [name]", "Switch visual theme (emerald, jarvis, cyberpunk, matrix, solar).")
+        table.add_row("/calc [expr]", "Perform high-precision mathematical evaluation.")
+        table.add_row("/time", "Show detailed UTC & local time telemetry.")
+        table.add_row("/history", "View recent query history log.")
+        table.add_row("/clear", "Refresh terminal view and banner HUD.")
+        table.add_row("/about", "IRIS AI core specifications and architecture.")
+        table.add_row("/exit, quit", "Gracefully terminate IRIS AI session.")
+
+        console.print(table)
+        console.print(f"\n[{t['dim']}]Tip: Ask IRIS to set timers, schedule actions, open apps, or control Spotify![/{t['dim']}]\n")
+        return True
+
+    def cmd_schedule(self):
+        from task_scheduler import task_scheduler
+        tasks = task_scheduler.get_active_tasks()
+        ui.render_scheduled_tasks_table(tasks, theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_canceltimer(self, command_str: str):
+        parts = command_str.split(maxsplit=1)
+        target_id = parts[1].strip() if len(parts) > 1 else None
+        from task_scheduler import task_scheduler
+        success, msg = task_scheduler.cancel_task(target_id)
+        if success:
+            console.print(f"[bold green]✓ {msg}[/bold green]\n")
+            voice_engine.speak(msg)
+        else:
+            ui.print_error(msg)
+        return True
+
+    def cmd_automation(self):
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        actions = automation_engine.registry.list_actions()
+        actions_str = ", ".join([f"`{a}`" for a in sorted(actions)])
+
+        info_text = (
+            f"### :: SECURE WINDOWS AUTOMATION ENGINE ::\n\n"
+            f"IRIS AI can execute PC control actions safely using structured JSON payloads.\n\n"
+            f"* **Active Handlers ({len(actions)}):** {actions_str}\n"
+            f"* **Security Guard:** High-risk actions (`delete_item`, `run_command`, `system_power`) require explicit `[y/N]` confirmation.\n"
+            f"* **Plugin Registry:** Modular extensibility enabled.\n"
+        )
+        console.print(Panel(info_text, border_style=t["border"], title=f"[{t['accent']}][AUTOMATION TELEMETRY][/{t['accent']}]"))
+        return True
+
+    def cmd_voice(self):
+        voice_engine.scan_and_load_voice(verbose=False)
+        status_str = "CLONED VOICE ACTIVE" if voice_engine.cloning_active else "STANDARD TTS FALLBACK"
+        ref_file = voice_engine.current_voice_file if voice_engine.current_voice_file else "None (Add voice sample to VOICE_DIRECTORY)"
+
+        voice_info = (
+            f"### :: LOCAL VOICE CLONING STATUS ::\n\n"
+            f"* **Voice Mode:** `{status_str}`\n"
+            f"* **Reference Voice:** `{ref_file}`\n"
+            f"* **Directory Watched:** `{voice_engine.voice_dir}`\n"
+            f"* **Source Path:** `{voice_engine.source_path}`\n"
+        )
+        console.print(Panel(voice_info, border_style="cyan", title="[bold cyan][VOICE TELEMETRY][/bold cyan]"))
+        return True
+
+    def cmd_status(self):
+        banner.render_scifi_status_hud(state="IDLE", theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_matrix(self):
+        ui.print_matrix_rain(duration=3.5)
+        banner.render_banner(theme_key=self.cli.current_theme, animate=False)
+        return True
+
+    def cmd_theme(self, command_str: str):
+        parts = command_str.split(maxsplit=1)
+        if len(parts) < 2:
+            available = ", ".join([f"[bold cyan]{k}[/bold cyan]" for k in config.THEMES.keys()])
+            console.print(f"Available themes: {available}")
+            console.print("Usage: [bold white]/theme <name>[/bold white]")
+            return True
+
+        new_theme = parts[1].strip().lower()
+        if new_theme in config.THEMES:
+            self.cli.current_theme = new_theme
+            console.clear()
+            banner.render_banner(theme_key=self.cli.current_theme, animate=False)
+            console.print(f"[bold green]+ Theme switched to {config.THEMES[new_theme]['name']}![/bold green]\n")
+        else:
+            ui.print_error(f"Invalid theme '{new_theme}'. Choose from: {', '.join(config.THEMES.keys())}")
+        return True
+
+    def cmd_calc(self, command_str: str):
+        expr = command_str.replace("/calc", "", 1).strip()
+        if not expr:
+            console.print("Usage: [bold white]/calc <expression>[/bold white] (e.g. /calc 2**10 + sqrt(144))")
+            return True
+
+        safe_dict = {
+            "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos, "tan": math.tan,
+            "pi": math.pi, "e": math.e, "pow": math.pow, "log": math.log,
+            "factorial": math.factorial, "abs": abs, "round": round
+        }
+        try:
+            res = eval(expr, {"__builtins__": None}, safe_dict)
+            calc_text = f"```math\n{expr} = {res}\n```"
+            console.print(Panel(calc_text, border_style="cyan", title="[bold cyan][CALCULATOR RESULT][/bold cyan]"))
+            voice_engine.speak(f"The calculated result is {res}")
+        except Exception as err:
+            ui.print_error(f"Calculation error: {err}")
+        return True
+
+    def cmd_time(self):
+        now = datetime.now()
+        utc = datetime.utcnow()
+        time_text = (
+            f"### :: TIME TELEMETRY ::\n\n"
+            f"* **Local Time:** `{now.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"* **UTC Time:** `{utc.strftime('%Y-%m-%d %H:%M:%S UTC')}`\n"
+            f"* **Unix Timestamp:** `{int(now.timestamp())}`\n"
+        )
+        console.print(Panel(time_text, border_style="cyan", title="[bold cyan][TIME TELEMETRY][/bold cyan]"))
+        return True
+
+    def cmd_history(self):
+        if not self.history:
+            console.print("[dim]No query history recorded yet.[/dim]\n")
+            return True
+
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        table = Table(title="[bold cyan][::] COMMAND HISTORY LOG [::][/bold cyan]", border_style=t["border"])
+        table.add_column("#", style="dim", no_wrap=True)
+        table.add_column("Query / Command", style="white")
+
+        for idx, item in enumerate(self.history[-15:], 1):
+            table.add_row(str(idx), item)
+
+        console.print(table)
+        console.print()
+        return True
+
+    def cmd_about(self):
+        about_text = (
+            f"### :: ABOUT IRIS AI (JARVIS ARCHITECTURE) ::\n\n"
+            f"**IRIS AI** is a production-ready, futuristic Sci-Fi CLI assistant integrated with Groq LLM reasoning, Windows Automation Engine, and local voice-cloning capabilities.\n\n"
+            f"* **LLM Provider:** `Groq API ({llm_engine.model_name})`\n"
+            f"* **Automation Engine:** `Active ({len(automation_engine.registry.list_actions())} handlers)`\n"
+            f"* **Voice Cloning:** `Enabled (Cached speaker reference)`\n"
+            f"* **Framework:** Python + Rich + Prompt Toolkit + PyFiglet + Groq\n"
+        )
+        console.print(Panel(about_text, border_style="cyan", title="[bold cyan][ABOUT IRIS AI][/bold cyan]"))
+        return True
+
+    def _classify_intent(self, query: str, action_data: dict | None) -> str:
+        """Classify user request into structured Intent categories."""
+        q_lower = query.lower()
+        if any(w in q_lower for w in ["time", "clock", "date"]):
+            return "Current Time"
+        elif any(w in q_lower for w in ["news", "headline", "headlines"]):
+            return "Current News"
+        elif any(w in q_lower for w in ["weather", "temperature", "forecast"]):
+            return "Current Information"
+
+        if action_data:
+            act = action_data.get("action", "").lower()
+            if act in ["set_timer", "pause_timer", "resume_timer", "cancel_timer", "get_timer_status", "schedule_delayed_action", "schedule_recurring_task", "list_tasks", "reschedule_task"]:
+                return "Task Scheduling / Timer"
+            elif act in ["play_spotify", "media_play_pause", "media_next", "media_prev", "set_volume", "mute_audio", "unmute_audio"]:
+                return "Media Control"
+            elif act in ["send_message"]:
+                return "Messaging"
+            elif act in ["open_desktop_item", "search_files"]:
+                return "File Search"
+            elif act in ["open_website", "browser_action", "web_search"]:
+                return "Browser Control"
+            elif act in ["get_system_info", "open_settings", "set_brightness"]:
+                return "System Control"
+            elif act in ["open_app", "close_app", "create_file", "create_folder", "rename_item", "delete_item", "run_command", "system_power"]:
+                return "Windows Automation"
+
+        if any(w in q_lower for w in ["timer", "schedule", "remind", "reminder", "alarm"]):
+            return "Task Scheduling / Timer"
+        elif any(w in q_lower for w in ["play", "spotify", "song", "music", "volume"]):
+            return "Media Control"
+        elif any(w in q_lower for w in ["whatsapp", "telegram", "discord", "teams", "message", "send"]):
+            return "Messaging"
+        elif any(w in q_lower for w in ["search file", "find file", "desktop"]):
+            return "File Search"
+        elif any(w in q_lower for w in ["open app", "close", "shutdown", "restart"]):
+            return "Windows Automation"
+
+        return "General Knowledge"
+
+    def process_groq_llm_query(self, query: str):
+        """Streams real AI responses from Groq model and executes desktop automation intents safely."""
+        self.chat_history.append({"role": "user", "content": query})
+
+        # Step 1: Generate stream response from Groq LLM
+        generator = llm_engine.stream_query(query, history=self.chat_history)
+
+        # Step 2: Render streaming UI
+        full_response = ui.render_streaming_response(
+            generator,
+            title="IRIS AI",
+            theme_key=self.cli.current_theme,
+            speak=True
+        )
+
+        if full_response and full_response.strip():
+            self.chat_history.append({"role": "assistant", "content": full_response.strip()})
+            self.chat_history = self.chat_history[-12:]
+
+        # Step 3: Extract Action Intent
+        action_intent = extract_action_intent(full_response)
+
+        # Classify and Log Intent
+        intent_cat = self._classify_intent(query, action_intent)
+        if config.DEBUG_MODE:
+            console.print(f"[bold cyan][INTENT] {intent_cat}[/bold cyan]")
+        debug_log(f"Intent classified: {intent_cat}", category="INTENT")
+
+        # Handle Live Info Intent (Time, Weather, News without browser)
+        if action_intent and action_intent.get("action") == "get_live_info":
+            info_type = action_intent.get("type", "time").lower()
+            import live_info
+            if "time" in info_type or "date" in info_type or "time" in query.lower():
+                live_text = live_info.get_current_time()
+            elif "weather" in info_type or "weather" in query.lower():
+                live_text = live_info.get_live_weather()
+            elif "news" in info_type or "news" in query.lower():
+                live_text = live_info.get_live_news()
+            else:
+                live_text = live_info.get_current_time()
+
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(Panel(live_text, border_style=t["border"], title=f"[{t['accent']}]✦ LIVE INFORMATION[/{t['accent']}]", padding=(0, 1)))
+            voice_engine.speak(live_text)
+            return
+
+        # Direct Query checks for Time, Weather, News if LLM didn't output JSON
+        q_lower = query.lower().strip()
+        if "time" in q_lower and any(w in q_lower for w in ["what", "current", "tell"]):
+            import live_info
+            t_str = live_info.get_current_time()
+            console.print(f"[bold green]{t_str}[/bold green]")
+            voice_engine.speak(t_str)
+            return
+        elif "weather" in q_lower and any(w in q_lower for w in ["today", "what", "current", "tell"]):
+            import live_info
+            w_str = live_info.get_live_weather()
+            console.print(f"[bold green]{w_str}[/bold green]")
+            voice_engine.speak(w_str)
+            return
+        elif "news" in q_lower and any(w in q_lower for w in ["today", "latest", "top", "headlines"]):
+            import live_info
+            n_str = live_info.get_live_news()
+            console.print(f"[bold green]{n_str}[/bold green]")
+            voice_engine.speak(n_str)
+            return
+
+        # Step 4: Execute Validated Automation Action if present
+        if action_intent:
+            high_risk, risk_reason = automation_engine.is_high_risk(action_intent)
+
+            if high_risk:
+                self.pending_action = action_intent
+                # Draft message in WhatsApp if sending a message
+                if action_intent.get("action") == "send_message":
+                    automation_engine.execute_action(action_intent, confirmed=False)
+                return
+
+            # Execute non-high-risk action immediately
+            exec_result = automation_engine.execute_action(action_intent, confirmed=True)
+
+            # Handle Candidate Disambiguation Prompt if multiple app matches found
+            if exec_result.get("status") == "failed" and "DISAMBIGUATION_REQUIRED" in str(exec_result.get("reason")):
+                raw_reason = str(exec_result.get("reason"))
+                cands_str = raw_reason.replace("ValueError: DISAMBIGUATION_REQUIRED:\n", "").replace("DISAMBIGUATION_REQUIRED:\n", "")
+                console.print(f"\n[bold yellow][SELECT APPLICATION][/bold yellow] Multiple candidates found:\n{cands_str}")
+                try:
+                    choice = input("Enter number to select application [1-N]: ").strip()
+                    if choice.isdigit():
+                        idx = int(choice) - 1
+                        lines = [line.strip() for line in cands_str.split("\n") if line.strip()]
+                        if 0 <= idx < len(lines):
+                            sel_line = lines[idx]
+                            import re
+                            path_match = re.search(r"`([^`]+)`", sel_line)
+                            if path_match:
+                                sel_path = path_match.group(1)
+                                os.startfile(sel_path)
+                                exec_result = {"status": "success", "details": f"Launched selected application: {sel_path}", "action": "open_app"}
+                except Exception as ex:
+                    console.print(f"[bold red]Disambiguation selection cancelled: {ex}[/bold red]")
+
+            ui.render_action_telemetry(exec_result, theme_key=self.cli.current_theme)
+
+            # Trigger spoken result
+            if exec_result.get("status") == "success":
+                voice_engine.speak(f"Executed action {action_intent.get('action')}")
+            elif exec_result.get("status") == "failed":
+                voice_engine.speak(f"Action failed: {exec_result.get('reason')}")
+
