@@ -177,8 +177,6 @@ def validate_gemini_key(key: str) -> tuple[bool, str]:
     key = key.strip()
     if not key:
         return False, "API key is empty."
-    if not key.startswith("AIza"):
-        return False, "Gemini API keys always start with 'AIza'. The key you entered doesn't look right."
 
     try:
         import google.generativeai as genai
@@ -187,11 +185,13 @@ def validate_gemini_key(key: str) -> tuple[bool, str]:
         model.generate_content("Hi", generation_config={"max_output_tokens": 1})
         return True, "OK"
     except ImportError:
-        # google-generativeai not installed — do format-only validation
-        return True, "OK (google-generativeai not installed; format accepted)"
+        # google-generativeai not installed — accept the key as-is (format looks valid)
+        if len(key) > 10:
+            return True, "OK (google-generativeai not installed; key format accepted)"
+        return False, "Key is too short to be valid."
     except Exception as ex:
         s = str(ex).lower()
-        if "api key" in s or "invalid" in s or "401" in s or "403" in s or "permission" in s:
+        if "api key" in s or "invalid" in s or "401" in s or "403" in s or "permission" in s or "api_key_invalid" in s:
             return False, "Invalid API key. Get yours at https://aistudio.google.com/app/apikey"
         if "429" in s or "quota" in s or "rate" in s:
             return True, "OK (rate-limited, key accepted)"
@@ -293,13 +293,6 @@ def _collect_gemini_key(required: bool = False) -> str:
         if not raw:
             console.print("[dim yellow]  [--] Gemini key skipped. Coding Mode will be disabled.[/dim yellow]")
             return ""
-
-        if not raw.startswith("AIza"):
-            console.print(
-                "[red]  [!!] That doesn't look like a Gemini key (should start with 'AIza').\n"
-                "       Get yours at: https://aistudio.google.com/app/apikey[/red]"
-            )
-            continue
 
         console.print("[dim cyan]  [..] Validating Gemini key...[/dim cyan]")
         valid, msg = validate_gemini_key(raw)
