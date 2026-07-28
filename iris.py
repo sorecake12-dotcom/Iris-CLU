@@ -27,7 +27,7 @@ from prompt_toolkit.history import InMemoryHistory
 import config
 import banner
 import ui
-from key_manager import ensure_api_key_configured
+from key_manager import ensure_api_keys_configured
 from voice_engine import voice_engine
 from llm_engine import llm_engine
 from commands import CommandProcessor
@@ -130,8 +130,8 @@ def main():
     if args.debug:
         config.DEBUG_MODE = True
 
-    # Ensure API key is configured before starting (runs wizard on first launch)
-    ensure_api_key_configured()
+    # Ensure API keys are configured before starting (runs wizard on first launch)
+    ensure_api_keys_configured()
 
     app = IrisCLI(theme=args.theme, boot_anim=not args.no_boot)
     app.run()

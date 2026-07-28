@@ -40,11 +40,16 @@ test_*.wav
 .iris_app_index.json
 
 # ─── Environment & Secrets ───────────────────────────────────────
-# NEVER commit your real .env — only .env.example goes to GitHub
+# NEVER commit API keys or secrets — only .env.example goes to GitHub
+
+# Environment files
 .env
+.env.*
+!.env.example
 
 # Local API key and user configuration — NEVER commit this
 config/config.json
+config/*.json
 
 # Voice cache generated at runtime
 voice_cache/

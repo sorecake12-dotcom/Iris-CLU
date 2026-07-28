@@ -130,6 +130,42 @@ class CommandProcessor:
         elif cmd_lower in ["/debug", "/dev"]:
             return self.cmd_debug()
 
+        # ── API Configuration commands ──────────────────────────
+        elif any(cmd_lower == phrase for phrase in [
+            "configure api", "/configureapi", "/configure api", "api setup", "setup api"
+        ]):
+            return self.cmd_configure_api()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "update groq api", "update groq key", "change groq key", "/updategroq"
+        ]):
+            return self.cmd_update_groq()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "update gemini api", "update gemini key", "change gemini key", "/updategemini"
+        ]):
+            return self.cmd_update_gemini()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "show api status", "api status", "/apistatus", "/api status"
+        ]):
+            return self.cmd_api_status()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "disable groq", "remove groq key", "delete groq key"
+        ]):
+            return self.cmd_disable_groq()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "disable gemini", "remove gemini key", "delete gemini key"
+        ]):
+            return self.cmd_disable_gemini()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "reset api configuration", "reset api config", "reset api", "/resetapi"
+        ]):
+            return self.cmd_reset_api()
+
         elif cmd_lower.startswith("/"):
             ui.print_error(f"Unknown command '{user_input}'. Type [bold white]/help[/bold white] for command matrix.")
             return True
@@ -179,6 +215,14 @@ class CommandProcessor:
         table.add_row("/clear", "Refresh terminal view and banner HUD.")
         table.add_row("/about", "IRIS AI core specifications and architecture.")
         table.add_row("/exit, quit", "Gracefully terminate IRIS AI session.")
+        table.add_section()
+        table.add_row("[bold magenta]configure api[/bold magenta]", "[magenta]Run the full API key setup wizard (Groq + Gemini).[/magenta]")
+        table.add_row("[bold magenta]update groq api[/bold magenta]", "[magenta]Update only the Groq API key.[/magenta]")
+        table.add_row("[bold magenta]update gemini api[/bold magenta]", "[magenta]Update only the Gemini API key (enables Coding Mode).[/magenta]")
+        table.add_row("[bold magenta]show api status[/bold magenta]", "[magenta]Display which API keys are configured (keys masked).[/magenta]")
+        table.add_row("[bold magenta]disable groq[/bold magenta]", "[magenta]Remove the stored Groq API key.[/magenta]")
+        table.add_row("[bold magenta]disable gemini[/bold magenta]", "[magenta]Remove the stored Gemini API key (disables Coding Mode).[/magenta]")
+        table.add_row("[bold magenta]reset api configuration[/bold magenta]", "[magenta]Clear ALL stored API keys from local config.[/magenta]")
 
         console.print(table)
         console.print(f"\n[{t['dim']}]Tip: Ask IRIS to set timers, schedule actions, open apps, or control Spotify![/{t['dim']}]\n")
@@ -308,17 +352,102 @@ class CommandProcessor:
         console.print()
         return True
 
+    def cmd_configure_api(self):
+        """Run the full API setup wizard for both Groq and Gemini."""
+        from key_manager import run_setup_wizard
+        run_setup_wizard(update_groq=True, update_gemini=True)
+        # Reinitialize LLM engine with potentially new key
+        from llm_engine import llm_engine
+        llm_engine.api_key = None
+        llm_engine.client  = None
+        llm_engine.initialize_client()
+        return True
+
+    def cmd_update_groq(self):
+        """Update only the Groq API key."""
+        from key_manager import run_setup_wizard
+        console.print("\n[bold cyan]  -- Update Groq API Key --[/bold cyan]")
+        run_setup_wizard(update_groq=True, update_gemini=False)
+        from llm_engine import llm_engine
+        llm_engine.api_key = None
+        llm_engine.client  = None
+        llm_engine.initialize_client()
+        return True
+
+    def cmd_update_gemini(self):
+        """Update only the Gemini API key."""
+        from key_manager import run_setup_wizard
+        console.print("\n[bold magenta]  -- Update Gemini API Key --[/bold magenta]")
+        run_setup_wizard(update_groq=False, update_gemini=True)
+        return True
+
+    def cmd_api_status(self):
+        """Display current API key configuration status (keys masked)."""
+        from key_manager import print_api_status
+        print_api_status(theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_disable_groq(self):
+        """Remove the stored Groq API key."""
+        from key_manager import delete_groq_api_key
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        accent = t["accent"]
+        console.print(f"\n[bold yellow]  [!!] This will remove your Groq API key.[/bold yellow]")
+        console.print("  [dim]IRIS will not be able to process AI queries until a new key is added.[/dim]")
+        try:
+            confirm = input("  Type  YES  to confirm: ").strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            confirm = ""
+        if confirm == "YES":
+            delete_groq_api_key()
+            console.print("[bold yellow]  Groq API key removed. Run  update groq api  to add a new one.[/bold yellow]\n")
+        else:
+            console.print("[dim]  Cancelled.[/dim]\n")
+        return True
+
+    def cmd_disable_gemini(self):
+        """Remove the stored Gemini API key (disables Coding Mode)."""
+        from key_manager import delete_gemini_api_key
+        delete_gemini_api_key()
+        console.print("[bold yellow]  Gemini API key removed. Coding Mode is now disabled.[/bold yellow]")
+        console.print("[dim]  Run  update gemini api  to re-enable Coding Mode.[/dim]\n")
+        return True
+
+    def cmd_reset_api(self):
+        """Clear ALL stored API keys from config/config.json."""
+        console.print("\n[bold red]  [!!] This will delete ALL stored API keys.[/bold red]")
+        console.print("  [dim]IRIS will run the setup wizard on next launch.[/dim]")
+        try:
+            confirm = input("  Type  RESET  to confirm: ").strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            confirm = ""
+        if confirm == "RESET":
+            from key_manager import reset_api_config
+            reset_api_config()
+        else:
+            console.print("[dim]  Cancelled.[/dim]\n")
+        return True
+
     def cmd_about(self):
+        from key_manager import get_api_status, _mask
+        api = get_api_status()
+        gem_line = (
+            f"`Gemini API (Coding Mode active)`"
+            if api["gemini"]["configured"]
+            else "`Gemini API (not configured — Coding Mode disabled)`"
+        )
         about_text = (
             f"### :: ABOUT IRIS AI (JARVIS ARCHITECTURE) ::\n\n"
             f"**IRIS AI** is a production-ready, futuristic Sci-Fi CLI assistant integrated with Groq LLM reasoning, Windows Automation Engine, and local voice-cloning capabilities.\n\n"
-            f"* **LLM Provider:** `Groq API ({llm_engine.model_name})`\n"
+            f"* **Primary LLM:** `Groq API ({llm_engine.model_name})`\n"
+            f"* **Coding LLM:**  {gem_line}\n"
             f"* **Automation Engine:** `Active ({len(automation_engine.registry.list_actions())} handlers)`\n"
             f"* **Voice Cloning:** `Enabled (Cached speaker reference)`\n"
             f"* **Framework:** Python + Rich + Prompt Toolkit + PyFiglet + Groq\n"
         )
         console.print(Panel(about_text, border_style="cyan", title="[bold cyan][ABOUT IRIS AI][/bold cyan]"))
         return True
+
 
     def _classify_intent(self, query: str, action_data: dict | None) -> str:
         """Classify user request into structured Intent categories."""

@@ -177,14 +177,21 @@ Features:
 
 ### Software Prerequisites
 
-| Software | Required | Purpose | Download |
+| Software | Required | Purpose | Get it |
 |---|---|---|---|
 | **Python 3.9+** | ✅ Required | Runtime | [python.org](https://www.python.org/downloads/) |
 | **Git** | Recommended | Cloning repo / updates | [git-scm.com](https://git-scm.com/download/win) |
-| **Groq API Key** | ✅ Required | AI reasoning engine | [console.groq.com](https://console.groq.com) (free) |
+| **Groq API Key** | ✅ Required | Core AI — chat, voice, automation | [console.groq.com](https://console.groq.com) (free) |
+| **Gemini API Key** | Optional | Coding Mode only | [aistudio.google.com](https://aistudio.google.com/app/apikey) (free) |
 | **FFmpeg** | Optional | Extended audio format support | [ffmpeg.org](https://ffmpeg.org/download.html) |
 | **Spotify Desktop** | Optional | Spotify automation | [spotify.com](https://www.spotify.com/download) |
 | **WhatsApp Desktop** | Optional | WhatsApp automation | [whatsapp.com](https://www.whatsapp.com/download) |
+
+> **API Key Policy:**
+> - **Groq** is required. IRIS cannot function without it. Get a free key at [console.groq.com](https://console.groq.com) — no credit card needed.
+> - **Gemini** is optional. It enables Coding Mode only. Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
+> - Keys are stored **locally only** in `config/config.json`. They are **never** hardcoded, never logged, and never uploaded to GitHub.
+> - IRIS will guide you through entering your keys on first launch — you never need to edit any file manually.
 
 ### Python Dependencies
 
@@ -196,7 +203,8 @@ All Python packages are installed automatically by the installer.
 | `prompt-toolkit` | ≥3.0.0 | REPL input, autocomplete, history |
 | `pyfiglet` | ≥1.0.0 | ASCII art banner |
 | `psutil` | ≥5.9.0 | System telemetry, process management |
-| `groq` | ≥0.4.0 | Groq LLM API client |
+| `groq` | ≥0.4.0 | Groq LLM API client (Normal Mode) |
+| `google-generativeai` | ≥0.7.0 | Gemini API client (Coding Mode) |
 | `python-dotenv` | ≥1.0.0 | `.env` environment variable loading |
 | `edge-tts` | ≥6.1.9 | Microsoft neural TTS (fallback voice) |
 | `pyttsx3` | ≥2.90 | SAPI5 system TTS (second fallback) |
@@ -265,30 +273,38 @@ The installer will automatically:
 python iris.py
 ```
 
-**On first launch**, IRIS will automatically detect that no API key is configured and display a friendly setup wizard:
+**On first launch**, IRIS will automatically detect that no API key is configured and display a friendly setup wizard for both providers:
 
 ```
-╭─────────────────────────────────────────────────╮
-│           IRIS AI  —  First-Run Setup           │
-│                                                  │
-│  Before we begin, you need a free Groq API key. │
-│                                                  │
-│  Steps:                                          │
-│  1. Open  https://console.groq.com              │
-│  2. Sign up (free — no credit card required)     │
-│  3. Go to  API Keys -> Create API Key            │
-│  4. Copy the key and paste it below              │
-│                                                  │
-│  Your key is stored locally only — it will       │
-│  never be uploaded to GitHub.                    │
-╰─────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────╮
+│           IRIS AI  --  API Configuration                 │
+│                                                          │
+│  IRIS uses two independent AI providers:                 │
+│                                                          │
+│  [1] Groq API Key     — required for all core features   │
+│      (chat, voice, automation, timers, general knowledge)│
+│                                                          │
+│  [2] Gemini API Key   — optional, enables Coding Mode    │
+│      (code generation, bug fixing, refactoring)          │
+│                                                          │
+│  Keys are stored in  config/config.json  locally only.   │
+│  They are NEVER uploaded to GitHub.                      │
+╰──────────────────────────────────────────────────────────╯
 
-  Paste your Groq API Key >
+  -- Groq API Key (console.groq.com) --
+
+  Groq API Key >
+
+  -- Gemini API Key (aistudio.google.com) --
+
+  Gemini API Key (press Enter to skip) >
 ```
 
-IRIS validates the key against the Groq API in real time. If valid, it is saved to `config/config.json` (excluded from Git) and IRIS launches immediately. You will **never be asked again**.
+**Validation:** IRIS validates each key live against its API. Invalid keys show a clear error and allow retry. Valid keys are saved to `config/config.json` (excluded from Git). You will **never be asked again** after successful setup.
 
 Or double-click `iris_run.bat`.
+
+
 
 ---
 
