@@ -240,6 +240,60 @@ class WindowsAutomationEngine:
         r.register("list_tasks", self._handle_list_tasks)
         r.register("reschedule_task", self._handle_reschedule_task)
 
+    # =========================================================================
+    # PATH RESOLUTION HELPER
+    # =========================================================================
+
+    @staticmethod
+    def _resolve_path(raw_path: str, filename: str = "") -> Path:
+        """
+        Resolve a user-friendly location keyword or partial path to a real absolute path.
+        Maps keywords like 'desktop', 'documents', 'downloads', 'pictures' to their
+        actual Windows special folders.  Falls back to expanduser().resolve() for
+        explicit absolute paths.
+        """
+        if not raw_path:
+            return Path.home() / "Desktop"
+
+        # Keyword map for common Windows locations
+        keyword_map = {
+            "desktop":       Path.home() / "Desktop",
+            "my desktop":    Path.home() / "Desktop",
+            "documents":     Path.home() / "Documents",
+            "my documents":  Path.home() / "Documents",
+            "downloads":     Path.home() / "Downloads",
+            "my downloads":  Path.home() / "Downloads",
+            "pictures":      Path.home() / "Pictures",
+            "my pictures":   Path.home() / "Pictures",
+            "music":         Path.home() / "Music",
+            "my music":      Path.home() / "Music",
+            "videos":        Path.home() / "Videos",
+            "my videos":     Path.home() / "Videos",
+            "home":          Path.home(),
+            "~":             Path.home(),
+        }
+
+        key = raw_path.strip().lower()
+
+        # Pure keyword match → map to folder, append filename if given
+        if key in keyword_map:
+            base = keyword_map[key]
+            return (base / filename) if filename else base
+
+        # Keyword prefix: e.g. "desktop/myfile.txt" or "desktop\myfile.txt"
+        for kw, folder in keyword_map.items():
+            if key.startswith(kw + "/") or key.startswith(kw + "\\"):
+                rest = raw_path[len(kw):].lstrip("\/")
+                return folder / rest
+
+        # Explicit path — expand ~ and resolve
+        p = Path(raw_path).expanduser()
+        if p.is_absolute():
+            return p.resolve()
+
+        # Relative path that isn't a keyword → treat as Desktop-relative
+        return (Path.home() / "Desktop" / raw_path).resolve()
+
     # 1. Dynamic Application & Disambiguation Control
     def _handle_open_app(self, data: dict) -> str:
         target = data.get("target") or data.get("app") or data.get("name")
@@ -339,22 +393,42 @@ class WindowsAutomationEngine:
 
     # 5. File System & Search
     def _handle_create_file(self, data: dict) -> str:
-        filepath = data.get("path") or data.get("target")
+        raw  = data.get("path") or data.get("target") or ""
+        name = data.get("name") or data.get("filename") or ""
         content = data.get("content", "")
-        if not filepath:
-            raise ValueError("No file path specified.")
-        p = Path(filepath).expanduser().resolve()
+
+        if not raw and not name:
+            raise ValueError("No file path or name specified.")
+
+        # If only a name was given, create on Desktop by default
+        if not raw and name:
+            raw = "desktop"
+
+        p = self._resolve_path(raw, filename=name)
+
+        # If the resolved path is a directory (no extension), treat it as a folder + default filename
+        if p.suffix == "" and name:
+            p = p / name
+        elif p.suffix == "" and not name:
+            raise ValueError(f"Please specify a filename (e.g. 'note.txt'), not just a folder name.")
+
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return f"Created file: {p}"
 
     def _handle_create_folder(self, data: dict) -> str:
-        folderpath = data.get("path") or data.get("target")
-        if not folderpath:
-            raise ValueError("No folder path specified.")
-        p = Path(folderpath).expanduser().resolve()
+        raw  = data.get("path") or data.get("target") or ""
+        name = data.get("name") or data.get("folder_name") or ""
+
+        if not raw and not name:
+            raise ValueError("No folder path or name specified.")
+
+        if not raw and name:
+            raw = "desktop"
+
+        p = self._resolve_path(raw, filename=name)
         p.mkdir(parents=True, exist_ok=True)
-        return f"Created directory: {p}"
+        return f"Created folder: {p}"
 
     def _handle_rename_item(self, data: dict) -> str:
         src = data.get("src") or data.get("path")
@@ -390,17 +464,23 @@ class WindowsAutomationEngine:
         return f"Moved '{src_p.name}' to '{dst_p}'"
 
     def _handle_delete_item(self, data: dict) -> str:
-        target = data.get("path") or data.get("target")
-        if not target:
+        raw = data.get("path") or data.get("target") or ""
+        name = data.get("name") or ""
+        if not raw and not name:
             raise ValueError("No item specified for deletion.")
-        p = Path(target).expanduser().resolve()
+        p = self._resolve_path(raw, filename=name)
         if not p.exists():
-            return f"Item '{p}' does not exist."
+            # Try Desktop as fallback if nothing found
+            fallback = Path.home() / "Desktop" / raw
+            if fallback.exists():
+                p = fallback
+            else:
+                return f"Item not found: {p}"
         if p.is_dir():
             shutil.rmtree(p)
         else:
             p.unlink()
-        return f"Deleted item: {p}"
+        return f"Deleted: {p}"
 
     def _handle_search_files(self, data: dict) -> str:
         query = data.get("query") or data.get("target") or "*.*"

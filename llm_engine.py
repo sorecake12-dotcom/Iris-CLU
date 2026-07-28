@@ -92,6 +92,14 @@ class GroqLLMEngine:
                 "   - Delayed Actions: `{\"action\": \"schedule_delayed_action\", \"delay_seconds\": 120, \"action_payload\": {\"action\": \"play_spotify\", \"query\": \"Liked Songs\"}, \"description\": \"Play Liked Songs after 2 minutes\"}`\n"
                 "   - Recurring tasks: `{\"action\": \"schedule_recurring_task\", \"recurrence\": \"hourly\"|\"daily\"|\"weekdays\", \"time_of_day\": \"19:00\", \"message\": \"Drink water\", \"description\": \"Drink water reminder\"}`\n"
                 "   - List tasks: `{\"action\": \"list_tasks\"}`\n\n"
+                "8. FILE MANAGEMENT (e.g. 'make a file on desktop called iris ai', 'create a folder called projects', 'delete the file jarvis from desktop'):\n"
+                "   - Use location keywords: 'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos'.\n"
+                "   - Create file:   `{\"action\": \"create_file\",   \"path\": \"desktop\", \"name\": \"iris ai.txt\", \"content\": \"\"}`\n"
+                "   - Create folder: `{\"action\": \"create_folder\", \"path\": \"desktop\", \"name\": \"projects\"}`\n"
+                "   - Delete file:   `{\"action\": \"delete_item\",   \"path\": \"desktop\", \"name\": \"jarvis.txt\"}`\n"
+                "   - ALWAYS include a 'name' field with the actual filename (with extension for files).\n"
+                "   - ALWAYS use the keyword 'desktop' (not a full path) when the user says 'on my desktop'.\n"
+                "   - Deleting files REQUIRES user confirmation — always tell the user before deleting.\n\n"
                 "Always respond in an energetic, natural, warm conversational tone."
             )
 
