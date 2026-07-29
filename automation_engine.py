@@ -25,6 +25,11 @@ from spotify_automation import play_spotify, bring_spotify_to_foreground, is_spo
 from whatsapp_automation import open_messaging_app, automate_whatsapp_message
 from browser_automation import open_multiple_websites, browser_search, execute_tab_action, fill_form_text
 from debug_logger import debug_log, log_json_payload, log_exception
+from file_engine import file_engine, resolve_path as fe_resolve
+from window_manager import window_manager
+from terminal_engine import terminal_engine
+from screen_engine import screen_engine
+from clipboard_engine import clipboard_engine
 
 console = Console()
 
@@ -46,11 +51,14 @@ except ImportError:
 HIGH_RISK_ACTIONS = {
     "delete_item",
     "run_command",
+    "run_terminal_command",
+    "kill_process",
     "system_power",
     "install_software",
     "registry_changes",
     "format_drive",
-    "send_message"
+    "send_message",
+    "empty_recycle_bin",
 }
 
 SETTINGS_PAGES = {
@@ -239,6 +247,65 @@ class WindowsAutomationEngine:
         r.register("schedule_recurring_task", self._handle_schedule_recurring_task)
         r.register("list_tasks", self._handle_list_tasks)
         r.register("reschedule_task", self._handle_reschedule_task)
+
+        # ── File Engine ───────────────────────────────────────────
+        r.register("create_file",        self._handle_create_file)
+        r.register("create_folder",      self._handle_create_folder)
+        r.register("create_batch_folders", self._handle_create_batch_folders)
+        r.register("delete_item",        self._handle_delete_item)
+        r.register("rename_item",        self._handle_rename_item)
+        r.register("copy_item",          self._handle_copy_item)
+        r.register("move_item",          self._handle_move_item)
+        r.register("read_file",          self._handle_read_file)
+        r.register("append_to_file",     self._handle_append_to_file)
+        r.register("replace_line",       self._handle_replace_line)
+        r.register("delete_line",        self._handle_delete_line)
+        r.register("search_in_file",     self._handle_search_in_file)
+        r.register("compress_item",      self._handle_compress_item)
+        r.register("extract_archive",    self._handle_extract_archive)
+        r.register("get_folder_size",    self._handle_get_folder_size)
+        r.register("list_folder",        self._handle_list_folder)
+        r.register("search_files",       self._handle_search_files_adv)
+        r.register("find_duplicates",    self._handle_find_duplicates)
+        r.register("restore_recycle_bin",self._handle_restore_recycle_bin)
+        r.register("empty_recycle_bin",  self._handle_empty_recycle_bin)
+
+        # ── Window Manager ────────────────────────────────────────
+        r.register("minimize_window",    self._handle_minimize_window)
+        r.register("maximize_window",    self._handle_maximize_window)
+        r.register("restore_window",     self._handle_restore_window)
+        r.register("focus_window",       self._handle_focus_window)
+        r.register("bring_to_front",     self._handle_focus_window)
+        r.register("close_window",       self._handle_close_window)
+        r.register("list_windows",       self._handle_list_windows)
+
+        # ── Terminal Engine ───────────────────────────────────────
+        r.register("run_terminal_command", self._handle_run_terminal)
+        r.register("run_powershell",     self._handle_run_terminal)
+        r.register("create_venv",        self._handle_create_venv)
+        r.register("install_package",    self._handle_install_package)
+        r.register("run_python",         self._handle_run_python)
+        r.register("kill_process",       self._handle_kill_process)
+        r.register("list_processes",     self._handle_list_processes)
+
+        # ── Screen Engine ─────────────────────────────────────────
+        r.register("take_screenshot",    self._handle_screenshot)
+        r.register("take_screenshot_area",self._handle_screenshot_area)
+        r.register("start_recording",    self._handle_start_recording)
+        r.register("stop_recording",     self._handle_stop_recording)
+        r.register("ocr_screen",         self._handle_ocr_screen)
+
+        # ── Clipboard Engine ──────────────────────────────────────
+        r.register("read_clipboard",     self._handle_read_clipboard)
+        r.register("write_clipboard",    self._handle_write_clipboard)
+        r.register("clear_clipboard",    self._handle_clear_clipboard)
+        r.register("clipboard_history",  self._handle_clipboard_history)
+
+        # ── Memory / Preferences ──────────────────────────────────
+        r.register("remember_preference",self._handle_remember_preference)
+        r.register("forget_preference",  self._handle_forget_preference)
+        r.register("remember_folder",    self._handle_remember_folder)
+        r.register("show_preferences",   self._handle_show_preferences)
 
     # =========================================================================
     # PATH RESOLUTION HELPER
@@ -789,6 +856,294 @@ class WindowsAutomationEngine:
             sec = parse_time_duration(str(dur_str)) or 300.0
         success, msg = task_scheduler.reschedule_task(qid, float(sec))
         return msg
+
+    # =========================================================================
+    # FILE ENGINE HANDLERS
+    # =========================================================================
+
+    def _handle_create_file(self, data: dict) -> str:
+        return file_engine.create_file(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            data.get("content", "")
+        )
+
+    def _handle_create_folder(self, data: dict) -> str:
+        return file_engine.create_folder(
+            data.get("path", "desktop"),
+            data.get("name", "")
+        )
+
+    def _handle_create_batch_folders(self, data: dict) -> str:
+        path   = data.get("path", "desktop")
+        prefix = data.get("prefix", "Folder")
+        start  = int(data.get("start", 1))
+        end    = int(data.get("end", 10))
+        return file_engine.create_batch_folders(path, prefix, start, end)
+
+    def _handle_delete_item(self, data: dict) -> str:
+        return file_engine.delete_item(
+            data.get("path", "desktop"),
+            data.get("name", "") or data.get("target", "")
+        )
+
+    def _handle_rename_item(self, data: dict) -> str:
+        return file_engine.rename_item(
+            data.get("path", "desktop"),
+            data.get("name", "") or data.get("old_name", ""),
+            data.get("new_name", "")
+        )
+
+    def _handle_copy_item(self, data: dict) -> str:
+        return file_engine.copy_item(
+            data.get("src_path", "desktop"),
+            data.get("src_name", "") or data.get("name", ""),
+            data.get("dst_path", "desktop"),
+            data.get("dst_name", "")
+        )
+
+    def _handle_move_item(self, data: dict) -> str:
+        return file_engine.move_item(
+            data.get("src_path", "desktop"),
+            data.get("src_name", "") or data.get("name", ""),
+            data.get("dst_path", "documents")
+        )
+
+    def _handle_read_file(self, data: dict) -> str:
+        return file_engine.read_file(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            int(data.get("max_lines", 100))
+        )
+
+    def _handle_append_to_file(self, data: dict) -> str:
+        return file_engine.append_to_file(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            data.get("text", "") or data.get("content", "")
+        )
+
+    def _handle_replace_line(self, data: dict) -> str:
+        return file_engine.replace_line(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            int(data.get("line", data.get("line_number", 1))),
+            data.get("new_text", "") or data.get("text", "")
+        )
+
+    def _handle_delete_line(self, data: dict) -> str:
+        return file_engine.delete_line(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            int(data.get("line", data.get("line_number", 1)))
+        )
+
+    def _handle_search_in_file(self, data: dict) -> str:
+        return file_engine.search_in_file(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            data.get("query", "") or data.get("search", "")
+        )
+
+    def _handle_compress_item(self, data: dict) -> str:
+        return file_engine.compress_to_zip(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            data.get("output_name", "")
+        )
+
+    def _handle_extract_archive(self, data: dict) -> str:
+        return file_engine.extract_archive(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            data.get("dest", "") or data.get("destination", "")
+        )
+
+    def _handle_get_folder_size(self, data: dict) -> str:
+        return file_engine.get_folder_size(
+            data.get("path", "desktop"),
+            data.get("name", "")
+        )
+
+    def _handle_list_folder(self, data: dict) -> str:
+        return file_engine.list_folder(
+            data.get("path", "desktop"),
+            data.get("name", ""),
+            bool(data.get("show_hidden", False))
+        )
+
+    def _handle_search_files_adv(self, data: dict) -> str:
+        return file_engine.search_files(
+            query=data.get("query", "*"),
+            location=data.get("location", data.get("path", "home")),
+            file_type=data.get("file_type", ""),
+            min_size_mb=float(data.get("min_size_mb", 0)),
+            max_size_mb=float(data.get("max_size_mb", 0)),
+            modified_today=bool(data.get("modified_today", False)),
+            max_results=int(data.get("max_results", 30)),
+        )
+
+    def _handle_find_duplicates(self, data: dict) -> str:
+        return file_engine.find_duplicates(
+            data.get("path", "desktop"),
+            data.get("name", "")
+        )
+
+    def _handle_restore_recycle_bin(self, data: dict) -> str:
+        return file_engine.restore_recycle_bin()
+
+    def _handle_empty_recycle_bin(self, data: dict) -> str:
+        return file_engine.empty_recycle_bin()
+
+    # =========================================================================
+    # WINDOW MANAGER HANDLERS
+    # =========================================================================
+
+    def _get_window_target(self, data: dict) -> str:
+        return data.get("target", "") or data.get("name", "") or data.get("window", "")
+
+    def _handle_minimize_window(self, data: dict) -> str:
+        return window_manager.minimize_window(self._get_window_target(data))
+
+    def _handle_maximize_window(self, data: dict) -> str:
+        return window_manager.maximize_window(self._get_window_target(data))
+
+    def _handle_restore_window(self, data: dict) -> str:
+        return window_manager.restore_window(self._get_window_target(data))
+
+    def _handle_focus_window(self, data: dict) -> str:
+        return window_manager.focus_window(self._get_window_target(data))
+
+    def _handle_close_window(self, data: dict) -> str:
+        return window_manager.close_window(self._get_window_target(data))
+
+    def _handle_list_windows(self, data: dict) -> str:
+        return window_manager.list_open_windows()
+
+    # =========================================================================
+    # TERMINAL ENGINE HANDLERS
+    # =========================================================================
+
+    def _handle_run_terminal(self, data: dict) -> str:
+        cmd = data.get("command", "") or data.get("cmd", "") or data.get("target", "")
+        cwd = data.get("cwd", "") or data.get("path", "")
+        if not cmd:
+            raise ValueError("No command specified.")
+        shell = data.get("shell", "powershell").lower()
+        if shell == "cmd":
+            return terminal_engine.run_cmd(cmd, cwd=cwd)
+        return terminal_engine.run_powershell(cmd, cwd=cwd)
+
+    def _handle_create_venv(self, data: dict) -> str:
+        return terminal_engine.create_venv(
+            data.get("path", "desktop"),
+            data.get("name", "venv")
+        )
+
+    def _handle_install_package(self, data: dict) -> str:
+        pkg = data.get("package", "") or data.get("name", "")
+        return terminal_engine.install_package(pkg)
+
+    def _handle_run_python(self, data: dict) -> str:
+        return terminal_engine.run_python_file(
+            data.get("file", "") or data.get("path", ""),
+            data.get("args", ""),
+            data.get("cwd", "")
+        )
+
+    def _handle_kill_process(self, data: dict) -> str:
+        name = data.get("name", "") or data.get("target", "")
+        return terminal_engine.kill_process(name)
+
+    def _handle_list_processes(self, data: dict) -> str:
+        return terminal_engine.list_processes(data.get("filter", "") or data.get("name", ""))
+
+    # =========================================================================
+    # SCREEN ENGINE HANDLERS
+    # =========================================================================
+
+    def _handle_screenshot(self, data: dict) -> str:
+        return screen_engine.take_screenshot(data.get("filename", ""))
+
+    def _handle_screenshot_area(self, data: dict) -> str:
+        return screen_engine.take_area_screenshot(
+            int(data.get("x", 0)),
+            int(data.get("y", 0)),
+            int(data.get("width", 800)),
+            int(data.get("height", 600)),
+            data.get("filename", "")
+        )
+
+    def _handle_start_recording(self, data: dict) -> str:
+        return screen_engine.start_recording(data.get("filename", ""))
+
+    def _handle_stop_recording(self, data: dict) -> str:
+        return screen_engine.stop_recording()
+
+    def _handle_ocr_screen(self, data: dict) -> str:
+        region = None
+        if all(k in data for k in ("x", "y", "width", "height")):
+            region = (int(data["x"]), int(data["y"]), int(data["width"]), int(data["height"]))
+        return screen_engine.ocr_screen(region)
+
+    # =========================================================================
+    # CLIPBOARD ENGINE HANDLERS
+    # =========================================================================
+
+    def _handle_read_clipboard(self, data: dict) -> str:
+        return clipboard_engine.read()
+
+    def _handle_write_clipboard(self, data: dict) -> str:
+        text = data.get("text", "") or data.get("content", "")
+        return clipboard_engine.write(text)
+
+    def _handle_clear_clipboard(self, data: dict) -> str:
+        return clipboard_engine.clear()
+
+    def _handle_clipboard_history(self, data: dict) -> str:
+        history = clipboard_engine.get_history()
+        if not history:
+            return "Clipboard history is empty."
+        lines = [f"  {i+1}. {h[:80]}" for i, h in enumerate(reversed(history))]
+        return "Clipboard history (most recent first):\n" + "\n".join(lines)
+
+    # =========================================================================
+    # PREFERENCE / MEMORY HANDLERS
+    # =========================================================================
+
+    def _handle_remember_preference(self, data: dict) -> str:
+        from memory import preference_store
+        key   = data.get("key", "") or data.get("name", "")
+        value = data.get("value", "") or data.get("content", "")
+        return preference_store.remember(key, value)
+
+    def _handle_forget_preference(self, data: dict) -> str:
+        from memory import preference_store
+        key = data.get("key", "") or data.get("name", "")
+        return preference_store.forget(key)
+
+    def _handle_remember_folder(self, data: dict) -> str:
+        from memory import preference_store
+        label = data.get("label", "") or data.get("name", "")
+        path  = data.get("path", "") or data.get("folder", "")
+        return preference_store.remember_folder(label, path)
+
+    def _handle_show_preferences(self, data: dict) -> str:
+        from memory import preference_store
+        prefs   = preference_store.get_all()
+        folders = preference_store.get_all_folders()
+        if not prefs and not folders:
+            return "No preferences stored yet. Say 'remember [something]' to save one."
+        lines = []
+        if prefs:
+            lines.append("Preferences:")
+            for k, v in prefs.items():
+                lines.append(f"  {k}: {v}")
+        if folders:
+            lines.append("Bookmarked folders:")
+            for k, v in folders.items():
+                lines.append(f"  {k}: {v}")
+        return "\n".join(lines)
 
 
 # Global Singleton Windows Automation Engine

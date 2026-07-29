@@ -130,6 +130,22 @@ class CommandProcessor:
         elif cmd_lower in ["/debug", "/dev"]:
             return self.cmd_debug()
 
+        # ── Coding Mode (Gemini) ────────────────────────────────
+        elif cmd_lower in ["/code", "coding mode", "/gemini"] or cmd_lower.startswith("/code "):
+            query = user_input[5:].strip() if cmd_lower.startswith("/code ") else ""
+            return self.process_coding_query(query or "")
+
+        # ── Memory commands ─────────────────────────────────────
+        elif cmd_lower in ["/memory", "memory", "show memory"]:
+            return self.cmd_memory()
+
+        elif cmd_lower in ["/clearmemory", "clear memory", "forget everything", "wipe memory"]:
+            return self.cmd_clearmemory()
+
+        # ── Wake word toggle ────────────────────────────────────
+        elif cmd_lower in ["/listen", "start listening", "wake word"]:
+            return self.cmd_listen()
+
         # ── API Configuration commands ──────────────────────────
         elif any(cmd_lower == phrase for phrase in [
             "configure api", "/configureapi", "/configure api", "api setup", "setup api"
@@ -166,12 +182,36 @@ class CommandProcessor:
         ]):
             return self.cmd_reset_api()
 
+        elif cmd_lower in ["/clip", "/clipboard", "clipboard history", "show clipboard"]:
+            return self.cmd_clipboard()
+
+        elif cmd_lower in ["/windows", "list windows", "show windows", "what's open"]:
+            return self.cmd_list_windows()
+
+        elif cmd_lower in ["/prefs", "/preferences", "show preferences", "show memory", "my preferences", "what do you remember"]:
+            return self.cmd_prefs()
+
+        elif cmd_lower in ["/screen", "screen tools"]:
+            return self.cmd_screen_info()
+
+        elif cmd_lower in ["/processes", "/ps", "list processes", "show processes", "running processes"]:
+            return self.cmd_list_processes()
+
         elif cmd_lower.startswith("/"):
             ui.print_error(f"Unknown command '{user_input}'. Type [bold white]/help[/bold white] for command matrix.")
             return True
 
         else:
-            # Send query to Groq LLM Engine and Windows Automation Engine
+            # Natural language pattern matching for common tasks
+            # (before routing to LLM, handle obvious intents instantly)
+            if self._handle_natural_language_shortcut(user_input, cmd_lower):
+                return True
+
+            # Auto-detect coding intent and route to Gemini if matched
+            from gemini_engine import detect_coding_intent
+            if detect_coding_intent(user_input):
+                return self.process_coding_query(user_input)
+            # Otherwise send query to Groq LLM Engine and Windows Automation Engine
             self.process_groq_llm_query(user_input)
             return True
 
@@ -599,3 +639,159 @@ class CommandProcessor:
             elif exec_result.get("status") == "failed":
                 voice_engine.speak(f"Action failed: {exec_result.get('reason')}")
 
+    # =========================================================================
+    # NEW COMMAND HANDLERS — Phase 5
+    # =========================================================================
+
+    def cmd_clipboard(self):
+        """Show clipboard history."""
+        from clipboard_engine import clipboard_engine
+        clipboard_engine.print_history(theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_list_windows(self):
+        """List all open windows."""
+        from window_manager import window_manager
+        result = window_manager.list_open_windows()
+        console.print(f"\n[bold cyan]{result}[/bold cyan]\n")
+        return True
+
+    def cmd_prefs(self):
+        """Show stored preferences and bookmarked folders."""
+        from memory import preference_store
+        preference_store.print_all(theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_screen_info(self):
+        """Show screen engine capabilities."""
+        console.print("\n[bold cyan][SCREEN ENGINE][/bold cyan]")
+        console.print("  📷  take screenshot     → say 'take a screenshot'")
+        console.print("  📐  area screenshot     → say 'capture area at x y width height'")
+        console.print("  🎥  start recording     → say 'start screen recording'")
+        console.print("  ⏹   stop recording      → say 'stop recording'")
+        console.print("  🔍  OCR screen          → say 'read text on my screen'")
+        console.print("[dim]  Screenshots → Pictures/Screenshots[/dim]")
+        console.print("[dim]  Recordings → Videos/IRIS Recordings[/dim]\n")
+        return True
+
+    def cmd_list_processes(self):
+        """List running processes."""
+        from terminal_engine import terminal_engine
+        result = terminal_engine.list_processes()
+        console.print(f"\n[dim cyan]{result}[/dim cyan]\n")
+        return True
+
+    def _handle_natural_language_shortcut(self, user_input: str, cmd_lower: str) -> bool:
+        """
+        Fast-path NLP handler for very obvious intents that don't need LLM.
+        Returns True if handled, False to let normal LLM routing continue.
+        """
+        # Clipboard quick reads
+        if cmd_lower in ["what's on my clipboard", "read clipboard", "show clipboard", "clipboard"]:
+            from clipboard_engine import clipboard_engine
+            result = clipboard_engine.read()
+            console.print(f"\n[bold cyan]{result}[/bold cyan]\n")
+            return True
+
+        # Preference memory
+        if cmd_lower.startswith("remember ") and " is " in cmd_lower:
+            from memory import preference_store
+            # "Remember my editor is VS Code"  or  "Remember that X is Y"
+            text = user_input[len("remember "):].strip()
+            if " is " in text:
+                parts = text.split(" is ", 1)
+                key   = parts[0].replace("my ", "").replace("that ", "").strip()
+                value = parts[1].strip()
+                result = preference_store.remember(key, value)
+                console.print(f"\n[bold green]{result}[/bold green]\n")
+                return True
+
+        if cmd_lower.startswith("forget "):
+            from memory import preference_store
+            key = user_input[len("forget "):].strip()
+            result = preference_store.forget(key)
+            console.print(f"\n[bold yellow]{result}[/bold yellow]\n")
+            return True
+
+        if cmd_lower.startswith("remember my") and "folder" in cmd_lower:
+            # "Remember my projects folder is C:/Projects"
+            from memory import preference_store
+            text = user_input.lower()
+            if " is " in text:
+                before, path = user_input.split(" is ", 1)
+                label = before.lower().replace("remember my", "").replace("folder", "").strip()
+                result = preference_store.remember_folder(label, path.strip())
+                console.print(f"\n[bold green]{result}[/bold green]\n")
+                return True
+
+        return False
+
+    # ── Coding Mode handler ───────────────────────────────────────────────────
+
+    def process_coding_query(self, query: str = ""):
+        """Route a coding question to Gemini Coding Engine and stream the response."""
+        from gemini_engine import gemini_engine
+        from key_manager import get_gemini_api_key
+
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+
+        if not get_gemini_api_key():
+            console.print(
+                f"\n[bold magenta][GEMINI][/bold magenta] Coding Mode requires a Gemini API key.\n"
+                "[dim]Run:  update gemini api  to add one.[/dim]\n"
+                "[dim]Get a free key at: https://aistudio.google.com/app/apikey[/dim]\n"
+            )
+            return True
+
+        if not query:
+            console.print(f"\n[{t['accent']}]IRIS CODING MODE[/{t['accent']}] [dim](powered by Gemini)[/dim]")
+            console.print("[dim]Ask any coding question, request code generation, or paste code to debug.[/dim]\n")
+            try:
+                query = input("Code query > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return True
+            if not query:
+                return True
+
+        console.print(f"\n[bold magenta][GEMINI ⚡ CODING MODE][/bold magenta]\n")
+
+        full_response = []
+        try:
+            for chunk in gemini_engine.stream_code_query(query):
+                console.print(chunk, end="", markup=False)
+                full_response.append(chunk)
+        except Exception as ex:
+            console.print(f"\n[bold red][GEMINI] Error: {ex}[/bold red]")
+
+        console.print("\n")
+        return True
+
+    # ── Memory command handlers ──────────────────────────────────────────────
+
+    def cmd_memory(self):
+        from memory import memory_store
+        memory_store.print_status(theme_key=self.cli.current_theme)
+        return True
+
+    def cmd_clearmemory(self):
+        console.print("\n[bold yellow]⚠  This will delete ALL stored conversation history.[/bold yellow]")
+        confirm = input("Type 'yes' to confirm: ").strip().lower()
+        if confirm == "yes":
+            from memory import memory_store
+            memory_store.clear()
+        else:
+            console.print("[dim]  Memory clear cancelled.[/dim]\n")
+        return True
+
+    # ── Listen command handler ───────────────────────────────────────────────
+
+    def cmd_listen(self):
+        from wake_word import wake_word_listener
+        if wake_word_listener.is_listening:
+            wake_word_listener.stop()
+            console.print("[bold yellow][WAKE] Wake word listener stopped.[/bold yellow]\n")
+        else:
+            started = wake_word_listener.start()
+            if not started:
+                console.print("[dim yellow]  Wake word unavailable — ensure SpeechRecognition and pyaudio are installed.[/dim yellow]\n")
+        return True

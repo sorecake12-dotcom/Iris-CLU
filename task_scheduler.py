@@ -15,6 +15,7 @@ from rich.table import Table
 
 import config
 from debug_logger import debug_log, log_exception
+from notifier import notify_timer_done, notify_reminder, notify_action_done
 
 console = Console()
 
@@ -572,10 +573,21 @@ class TaskScheduler:
         except Exception:
             pass
 
-        # 2. Terminal Visual Notification
+        # 2. Windows Toast Notification
+        try:
+            if task.task_type == "timer":
+                notify_timer_done(task.description)
+            elif task.task_type == "recurring":
+                notify_reminder(task.message or task.description)
+            else:
+                notify_action_done(task.description)
+        except Exception:
+            pass
+
+        # 3. Terminal Visual Notification
         self._print_terminal_notification(task)
 
-        # 3. Spoken Announcement via active voice engine
+        # 4. Spoken Announcement via active voice engine
         speech_text = task.speak_on_finish or f"Boss, your timer for {task.description} has finished."
         
         # If task has associated automation action, execute it automatically

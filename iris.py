@@ -32,17 +32,34 @@ from voice_engine import voice_engine
 from llm_engine import llm_engine
 from commands import CommandProcessor
 from task_scheduler import task_scheduler
+from memory import memory_store
+from wake_word import wake_word_listener
 
 console = Console()
 
+
 class IrisCLI:
-    def __init__(self, theme=config.DEFAULT_THEME, boot_anim=True):
-        self.current_theme = theme if theme in config.THEMES else config.DEFAULT_THEME
-        self.boot_anim = boot_anim
-        self.processor = CommandProcessor(self)
-        self.history = InMemoryHistory()
-        # Start background task scheduler engine
+    def __init__(self, theme=config.DEFAULT_THEME, boot_anim=True, listen_mode=False):
+        self.current_theme  = theme if theme in config.THEMES else config.DEFAULT_THEME
+        self.boot_anim      = boot_anim
+        self.listen_mode    = listen_mode   # wake-word mode
+        self.processor      = CommandProcessor(self)
+        self.history        = InMemoryHistory()
+        self.session_started = False
+
+        # Start background task scheduler
         task_scheduler.start()
+
+        # Start clipboard background monitor (tracks clipboard changes automatically)
+        from clipboard_engine import clipboard_engine
+        clipboard_engine.start_monitoring()
+
+        # Load persistent memory into LLM context
+        recent = memory_store.load_recent()
+        if recent:
+            llm_engine.chat_history.extend(recent)
+            if config.DEBUG_MODE:
+                console.print(f"[dim cyan][MEMORY] Loaded {len(recent)} recent exchanges from persistent memory.[/dim cyan]")
 
     def get_completer(self):
         """Build command completer for prompt_toolkit."""
@@ -50,7 +67,10 @@ class IrisCLI:
             "/help", "/automation", "/actions", "/status", "/sys", "/sysinfo", "/voice", "/matrix",
             "/timers", "/tasks", "/schedule", "/canceltimer",
             "/theme jarvis", "/theme cyberpunk", "/theme matrix", "/theme solar",
-            "/calc", "/time", "/history", "/clear", "/about", "/exit", "quit"
+            "/calc", "/time", "/history", "/clear", "/about", "/exit", "quit",
+            "/code", "/memory", "/clearmemory", "/listen",
+            "configure api", "update groq api", "update gemini api",
+            "show api status", "disable groq", "disable gemini", "reset api configuration",
         ]
         return WordCompleter(commands, ignore_case=True)
 
@@ -70,8 +90,8 @@ class IrisCLI:
         brand_color = color_map.get(primary, "#00f0ff")
 
         return PTStyle.from_dict({
-            "brand": f"bold {brand_color}",
-            "symbol": "bold #00ffaa",
+            "brand":   f"bold {brand_color}",
+            "symbol":  "bold #00ffaa",
             "pointer": "bold #ffffff",
         })
 
@@ -87,6 +107,10 @@ class IrisCLI:
         console.print(f"[{accent}]IRIS AI >[/{accent}]")
         console.print("Hey Boss! What would you like me to do today?\n")
 
+        # Start wake word listener if requested
+        if self.listen_mode:
+            wake_word_listener.start()
+
         # Initialize PromptSession
         session = PromptSession(
             history=self.history,
@@ -97,6 +121,16 @@ class IrisCLI:
         running = True
         try:
             while running:
+                # ── Wake word trigger check (non-blocking) ──
+                if self.listen_mode and wake_word_listener.is_listening:
+                    triggered, spoken_cmd = wake_word_listener.wait_for_trigger(timeout=0.05)
+                    if triggered and spoken_cmd:
+                        console.print(f"\n[bold bright_cyan][WAKE] Boss said:[/bold bright_cyan] {spoken_cmd}")
+                        voice_engine.stop_speech()
+                        running = self.processor.process(spoken_cmd)
+                        continue
+
+                # ── Standard keyboard input ──
                 try:
                     user_input = session.prompt(
                         "Boss > ",
@@ -107,7 +141,6 @@ class IrisCLI:
 
                 # Interrupt previous audio on new input submit
                 voice_engine.stop_speech()
-
                 running = self.processor.process(user_input)
 
         except KeyboardInterrupt:
@@ -117,13 +150,29 @@ class IrisCLI:
             voice_engine.stop_speech()
             console.print("\n[bold cyan]Terminating IRIS AI session...[/bold cyan]")
         finally:
+            # Stop background services
             task_scheduler.stop()
+            if self.listen_mode:
+                wake_word_listener.stop()
+
+            # Save session memory before exit
+            if hasattr(llm_engine, "chat_history") and llm_engine.chat_history:
+                memory_store.save_session(llm_engine.chat_history)
+                if config.DEBUG_MODE:
+                    console.print(f"[dim cyan][MEMORY] Session saved ({len(llm_engine.chat_history)} exchanges).[/dim cyan]")
+
 
 def main():
     parser = argparse.ArgumentParser(description="IRIS AI - Futuristic Terminal Interface")
-    parser.add_argument("--theme", type=str, default="emerald", choices=["emerald", "jarvis", "cyberpunk", "matrix", "solar"], help="Set visual color theme")
-    parser.add_argument("--no-boot", action="store_true", help="Skip startup sequence")
-    parser.add_argument("--debug", "-d", action="store_true", help="Enable developer debug mode (live telemetry logs)")
+    parser.add_argument(
+        "--theme", type=str, default="emerald",
+        choices=["emerald", "jarvis", "cyberpunk", "matrix", "solar"],
+        help="Set visual color theme"
+    )
+    parser.add_argument("--no-boot",  action="store_true", help="Skip startup sequence")
+    parser.add_argument("--debug","-d", action="store_true", help="Enable developer debug mode")
+    parser.add_argument("--listen",  action="store_true", help="Enable wake-word listening mode ('Hey IRIS')")
+    parser.add_argument("--code",    action="store_true", help="Boot directly into Coding Mode (Gemini)")
 
     args = parser.parse_args()
 
@@ -133,8 +182,17 @@ def main():
     # Ensure API keys are configured before starting (runs wizard on first launch)
     ensure_api_keys_configured()
 
-    app = IrisCLI(theme=args.theme, boot_anim=not args.no_boot)
+    # If --code flag passed, print reminder and proceed
+    if args.code:
+        console.print("[bold magenta][GEMINI] Coding Mode flag detected — type any coding question to begin.[/bold magenta]\n")
+
+    app = IrisCLI(
+        theme=args.theme,
+        boot_anim=not args.no_boot,
+        listen_mode=args.listen,
+    )
     app.run()
+
 
 if __name__ == "__main__":
     main()
