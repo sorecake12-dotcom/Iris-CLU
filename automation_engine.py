@@ -278,6 +278,9 @@ class WindowsAutomationEngine:
         r.register("bring_to_front",     self._handle_focus_window)
         r.register("close_window",       self._handle_close_window)
         r.register("list_windows",       self._handle_list_windows)
+        r.register("snap_window",        self._handle_snap_window)
+        r.register("split_screen",       self._handle_split_screen)
+        r.register("position_window",    self._handle_position_window)
 
         # ── Terminal Engine ───────────────────────────────────────
         r.register("run_terminal_command", self._handle_run_terminal)
@@ -1019,6 +1022,24 @@ class WindowsAutomationEngine:
 
     def _handle_list_windows(self, data: dict) -> str:
         return window_manager.list_open_windows()
+
+    def _handle_snap_window(self, data: dict) -> str:
+        target = self._get_window_target(data)
+        pos = data.get("position") or data.get("side") or "left"
+        return window_manager.snap_window(target, pos)
+
+    def _handle_split_screen(self, data: dict) -> str:
+        left = data.get("left_target") or data.get("left") or "vs code"
+        right = data.get("right_target") or data.get("right") or "spotify"
+        return window_manager.split_screen(left, right)
+
+    def _handle_position_window(self, data: dict) -> str:
+        target = self._get_window_target(data)
+        x = int(data.get("x", 0))
+        y = int(data.get("y", 0))
+        w = int(data.get("width", 960))
+        h = int(data.get("height", 1080))
+        return window_manager.set_window_geometry(target, x, y, w, h)
 
     # =========================================================================
     # TERMINAL ENGINE HANDLERS

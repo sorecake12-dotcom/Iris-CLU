@@ -286,6 +286,7 @@ class CommandProcessor:
 
         nl_table.add_row('"Create 10 folders Day1 to Day10 on my Desktop"', "Batch folder creation (10 folders Day1..Day10)")
         nl_table.add_row('"Compress the Projects folder into a ZIP"', "ZIP compression of specified folder")
+        nl_table.add_row('"Set VS Code on left side and Spotify on right side"', "Split screen layout & window snapping")
         nl_table.add_row('"Minimize Chrome" / "Maximize VS Code"', "Window state controls (minimize, maximize, restore, focus)")
         nl_table.add_row('"Run git status"', "PowerShell / CMD output execution (with confirmation)")
         nl_table.add_row('"Install numpy"', "Pip package installation in Python environment")
@@ -755,6 +756,21 @@ class CommandProcessor:
                 label = before.lower().replace("remember my", "").replace("folder", "").strip()
                 result = preference_store.remember_folder(label, path.strip())
                 console.print(f"\n[bold green]{result}[/bold green]\n")
+                return True
+
+        # Window Snapping NLP fast-path
+        if ("left side" in cmd_lower or "right side" in cmd_lower or "left half" in cmd_lower or "right half" in cmd_lower or "snap " in cmd_lower) and any(kw in cmd_lower for kw in ["set ", "put ", "open ", "snap ", "move ", "place "]):
+            from window_manager import window_manager
+            side = "left" if "left" in cmd_lower else ("right" if "right" in cmd_lower else "left")
+            target = ""
+            for app in ["vs code", "vscode", "code", "spotify", "chrome", "edge", "notepad", "calculator", "discord", "steam", "explorer"]:
+                if app in cmd_lower:
+                    target = app
+                    break
+            if target:
+                res = window_manager.snap_window(target, side)
+                console.print(f"\n[bold cyan]{res}[/bold cyan]\n")
+                voice_engine.speak(res)
                 return True
 
         return False

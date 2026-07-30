@@ -38,6 +38,60 @@ def _ps(cmd: str, timeout: int = 8) -> str:
         return ""
 
 
+def get_work_area() -> tuple[int, int, int, int]:
+    """Returns (x, y, width, height) of usable desktop work area excluding taskbar."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                        ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        rect = RECT()
+        # SPI_GETWORKAREA = 0x0030
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            if w > 0 and h > 0:
+                return rect.left, rect.top, w, h
+    except Exception:
+        pass
+    try:
+        import ctypes
+        w = ctypes.windll.user32.GetSystemMetrics(0)
+        h = ctypes.windll.user32.GetSystemMetrics(1)
+        if w > 0 and h > 0:
+            return 0, 0, w, h
+    except Exception:
+        pass
+    return 0, 0, 1920, 1080
+
+
+def calculate_snap_bounds(position: str) -> tuple[int, int, int, int]:
+    wx, wy, ww, wh = get_work_area()
+    pos = position.lower().replace(" ", "_").replace("-", "_")
+
+    if pos in ["left", "left_side", "left_half", "snap_left"]:
+        return wx, wy, ww // 2, wh
+    elif pos in ["right", "right_side", "right_half", "snap_right"]:
+        return wx + (ww // 2), wy, ww // 2, wh
+    elif pos in ["top", "top_side", "top_half", "snap_top"]:
+        return wx, wy, ww, wh // 2
+    elif pos in ["bottom", "bottom_side", "bottom_half", "snap_bottom"]:
+        return wx, wy + (wh // 2), ww, wh // 2
+    elif pos in ["top_left", "topleft"]:
+        return wx, wy, ww // 2, wh // 2
+    elif pos in ["top_right", "topright"]:
+        return wx + (ww // 2), wy, ww // 2, wh // 2
+    elif pos in ["bottom_left", "bottomleft"]:
+        return wx, wy + (wh // 2), ww // 2, wh // 2
+    elif pos in ["bottom_right", "bottomright"]:
+        return wx + (ww // 2), wy + (wh // 2), ww // 2, wh // 2
+    elif pos in ["center", "middle"]:
+        return wx + (ww // 4), wy + (wh // 4), ww // 2, wh // 2
+    else:
+        return wx, wy, ww // 2, wh
+
+
 # ── Window Manager ────────────────────────────────────────────────
 
 class WindowManager:
@@ -188,6 +242,104 @@ class WindowManager:
         _ps(cmd)
         return f"Sent close signal to '{name}'."
 
+    def snap_window(self, name: str, position: str = "left") -> str:
+        """Snap a window to left, right, top, bottom, corners, or center."""
+        x, y, w, h = calculate_snap_bounds(position)
+
+        wins = self._find_windows(name)
+        if not wins:
+            # Try launching app if not open
+            self._try_launch_app(name)
+            time.sleep(1.5)
+            wins = self._find_windows(name)
+
+        if not wins:
+            ps_success = self._ps_snap_window(name, x, y, w, h)
+            if ps_success:
+                return f"Snapped '{name}' to {position} half ({w}x{h})."
+            return f"Could not find open window for '{name}'."
+
+        count = 0
+        for win in wins:
+            try:
+                if HAS_GW and hasattr(win, '_hWnd') and win._hWnd:
+                    import ctypes
+                    ctypes.windll.user32.ShowWindow(win._hWnd, 9)
+                    ctypes.windll.user32.MoveWindow(win._hWnd, int(x), int(y), int(w), int(h), True)
+                    ctypes.windll.user32.SetForegroundWindow(win._hWnd)
+                    count += 1
+                elif HAS_GW:
+                    if win.isMaximized or win.isMinimized:
+                        win.restore()
+                        time.sleep(0.1)
+                    win.moveTo(x, y)
+                    win.resizeTo(w, h)
+                    win.activate()
+                    count += 1
+            except Exception as ex:
+                debug_log(f"Snap failed for window {win}: {ex}", category="WINDOW")
+
+        pos_label = position.replace("_", " ").title()
+        return f"Snapped '{name}' to {pos_label} side of screen ({w}x{h})."
+
+    def split_screen(self, left_target: str, right_target: str) -> str:
+        """Snap one window to left half and another to right half."""
+        res_left = self.snap_window(left_target, "left")
+        time.sleep(0.3)
+        res_right = self.snap_window(right_target, "right")
+        return f"Split screen layout complete:\n  • {res_left}\n  • {res_right}"
+
+    def set_window_geometry(self, name: str, x: int, y: int, width: int, height: int) -> str:
+        """Move and resize window to exact coordinates."""
+        wins = self._find_windows(name)
+        if not wins:
+            self._try_launch_app(name)
+            time.sleep(1.2)
+            wins = self._find_windows(name)
+        if not wins:
+            self._ps_snap_window(name, x, y, width, height)
+            return f"Set '{name}' bounds to ({x}, {y}, {width}x{height})."
+        for win in wins:
+            try:
+                if HAS_GW and hasattr(win, '_hWnd') and win._hWnd:
+                    import ctypes
+                    ctypes.windll.user32.ShowWindow(win._hWnd, 9)
+                    ctypes.windll.user32.MoveWindow(win._hWnd, int(x), int(y), int(width), int(height), True)
+                    ctypes.windll.user32.SetForegroundWindow(win._hWnd)
+            except Exception:
+                pass
+        return f"Positioned '{name}' window at ({x}, {y}, {width}x{height})."
+
+    def _ps_snap_window(self, name: str, x: int, y: int, w: int, h: int) -> bool:
+        cmd = (
+            f"Add-Type @'\n"
+            f"using System;\nusing System.Runtime.InteropServices;\n"
+            f"public class WinSnap {{\n"
+            f"  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int cmd);\n"
+            f"  [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int h, bool repaint);\n"
+            f"  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);\n"
+            f"}}\n'@ -Language CSharp;\n"
+            f"$proc = Get-Process | Where-Object {{$_.MainWindowTitle -match '{name}'}} | Select-Object -First 1;\n"
+            f"if ($proc) {{\n"
+            f"  [WinSnap]::ShowWindow($proc.MainWindowHandle, 9);\n"
+            f"  [WinSnap]::MoveWindow($proc.MainWindowHandle, {x}, {y}, {w}, {h}, $true);\n"
+            f"  [WinSnap]::SetForegroundWindow($proc.MainWindowHandle);\n"
+            f"  exit 0\n"
+            f"}} else {{ exit 1 }}"
+        )
+        out = _ps(cmd)
+        return True
+
+    def _try_launch_app(self, name: str):
+        try:
+            from app_discovery import find_app_path
+            app_info = find_app_path(name)
+            if app_info and app_info.get("path"):
+                os.startfile(app_info["path"])
+        except Exception:
+            pass
+
 
 # Global Singleton
 window_manager = WindowManager()
+

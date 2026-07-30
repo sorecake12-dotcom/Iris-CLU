@@ -96,12 +96,14 @@ class GroqLLMEngine:
                 "   {\"action\": \"get_system_info\"}\n"
                 "   {\"action\": \"take_screenshot\"}\n\n"
 
-                "7. WINDOW CONTROL (minimize/maximize/restore/focus):\n"
+                "7. WINDOW CONTROL (minimize/maximize/restore/focus/snap/split):\n"
                 "   {\"action\": \"minimize_window\", \"target\": \"chrome\"}\n"
                 "   {\"action\": \"maximize_window\", \"target\": \"notepad\"}\n"
                 "   {\"action\": \"restore_window\",  \"target\": \"spotify\"}\n"
                 "   {\"action\": \"focus_window\",    \"target\": \"vs code\"}\n"
                 "   {\"action\": \"close_window\",    \"target\": \"discord\"}\n"
+                "   {\"action\": \"snap_window\",     \"target\": \"vs code\", \"position\": \"left\"|\"right\"|\"top\"|\"bottom\"}\n"
+                "   {\"action\": \"split_screen\",    \"left_target\": \"vs code\", \"right_target\": \"spotify\"}\n"
                 "   {\"action\": \"list_windows\"}\n\n"
 
                 "8. TIMERS & SCHEDULING:\n"
