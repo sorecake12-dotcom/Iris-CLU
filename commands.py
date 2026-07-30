@@ -236,21 +236,31 @@ class CommandProcessor:
         t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
         accent = t["accent"]
 
+        # Table 1: Command Matrix
         table = Table(title="[bold cyan][::] IRIS AI COMMAND MATRIX [::][/bold cyan]", border_style=t["border"])
         table.add_column("Command", style=f"bold {accent}", no_wrap=True)
         table.add_column("Description", style="white")
 
         table.add_row("/help", "Display this command matrix overview.")
-        table.add_row("/debug", "Toggle developer debug mode (live telemetry logs).")
+        table.add_row("/code", "Boot into Coding Mode (Gemini AI pair programmer).")
+        table.add_row("/listen", "Toggle background wake-word listener ('Hey IRIS').")
+        table.add_row("/clip", "View rolling clipboard history & restore entries.")
+        table.add_row("/windows", "List all open visible windows on your PC.")
+        table.add_row("/prefs", "Show stored preferences & bookmarked folders.")
+        table.add_row("/memory", "Show persistent conversation memory stats.")
+        table.add_row("/clearmemory", "Wipe stored conversation history.")
+        table.add_row("/screen", "Display screenshot, screen recording, & OCR tools.")
+        table.add_row("/processes, /ps", "List running processes & memory usage.")
         table.add_row("/automation, /actions", "View desktop automation handlers & capabilities.")
         table.add_row("/timers, /tasks", "View active timers and background scheduled tasks.")
         table.add_row("/canceltimer [id]", "Cancel a running timer or task (or 'all').")
         table.add_row("/status, /sys", "Show live CPU, RAM, and System telemetry dashboard.")
+        table.add_row("/theme [name]", "Switch visual theme (emerald, jarvis, cyberpunk, matrix, solar).")
         table.add_row("/voice", "Check local voice-cloning status and reference audio file.")
         table.add_row("/matrix", "Launch digital rain cyber visualizer.")
-        table.add_row("/theme [name]", "Switch visual theme (emerald, jarvis, cyberpunk, matrix, solar).")
         table.add_row("/calc [expr]", "Perform high-precision mathematical evaluation.")
         table.add_row("/time", "Show detailed UTC & local time telemetry.")
+        table.add_row("/debug", "Toggle developer debug mode (live telemetry logs).")
         table.add_row("/history", "View recent query history log.")
         table.add_row("/clear", "Refresh terminal view and banner HUD.")
         table.add_row("/about", "IRIS AI core specifications and architecture.")
@@ -265,7 +275,30 @@ class CommandProcessor:
         table.add_row("[bold magenta]reset api configuration[/bold magenta]", "[magenta]Clear ALL stored API keys from local config.[/magenta]")
 
         console.print(table)
-        console.print(f"\n[{t['dim']}]Tip: Ask IRIS to set timers, schedule actions, open apps, or control Spotify![/{t['dim']}]\n")
+
+        # Table 2: What You Can Say To IRIS (Natural Language Examples)
+        nl_table = Table(
+            title="\n[bold cyan][::] WHAT YOU CAN SAY TO IRIS (NATURAL LANGUAGE EXAMPLES) [::][/bold cyan]",
+            border_style=t["border"]
+        )
+        nl_table.add_column("Example Prompt", style=f"bold {accent}")
+        nl_table.add_column("Action / Result", style="white")
+
+        nl_table.add_row('"Create 10 folders Day1 to Day10 on my Desktop"', "Batch folder creation (10 folders Day1..Day10)")
+        nl_table.add_row('"Compress the Projects folder into a ZIP"', "ZIP compression of specified folder")
+        nl_table.add_row('"Minimize Chrome" / "Maximize VS Code"', "Window state controls (minimize, maximize, restore, focus)")
+        nl_table.add_row('"Run git status"', "PowerShell / CMD output execution (with confirmation)")
+        nl_table.add_row('"Install numpy"', "Pip package installation in Python environment")
+        nl_table.add_row('"Take a screenshot"', "Full screen capture saved to Pictures/Screenshots/")
+        nl_table.add_row('"Read my clipboard"', "Displays current clipboard content")
+        nl_table.add_row('"Remember my editor is VS Code"', "Saves key-value preference to config/preferences.json")
+        nl_table.add_row('"Find all PDFs in Documents"', "Multi-criteria file search across system folders")
+        nl_table.add_row('"/prefs"', "Shows all remembered preferences & bookmarked folders")
+        nl_table.add_row('"/windows"', "Lists all open visible windows on your PC")
+        nl_table.add_row('"/clip"', "Shows rolling clipboard history and recall options")
+
+        console.print(nl_table)
+        console.print(f"\n[{t['dim']}]Tip: Speak or type in natural language! IRIS automatically understands intent and executes actions.[/{t['dim']}]\n")
         return True
 
     def cmd_schedule(self):

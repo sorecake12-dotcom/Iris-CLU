@@ -69,6 +69,7 @@ class IrisCLI:
             "/theme jarvis", "/theme cyberpunk", "/theme matrix", "/theme solar",
             "/calc", "/time", "/history", "/clear", "/about", "/exit", "quit",
             "/code", "/memory", "/clearmemory", "/listen",
+            "/clip", "/windows", "/prefs", "/screen", "/processes", "/ps",
             "configure api", "update groq api", "update gemini api",
             "show api status", "disable groq", "disable gemini", "reset api configuration",
         ]
