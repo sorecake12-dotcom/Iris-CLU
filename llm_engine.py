@@ -88,7 +88,9 @@ class GroqLLMEngine:
                 "   {\"action\": \"open_website\", \"url\": \"https://youtube.com\"}\n"
                 "   {\"action\": \"close_website\", \"target\": \"youtube\"}\n"
                 "   {\"action\": \"browser_search\", \"query\": \"best Python tutorials\", \"engine\": \"google\"|\"youtube\"}\n"
-                "   {\"action\": \"open_multiple_websites\", \"urls\": [\"https://a.com\", \"https://b.com\"]}\n\n"
+                "   {\"action\": \"open_multiple_websites\", \"urls\": [\"https://a.com\", \"https://b.com\"]}\n"
+                "   {\"action\": \"restore_browser_session\"}\n"
+                "   {\"action\": \"execute_tab_action\", \"sub_action\": \"new_tab\"|\"close_tab\"|\"switch_tab\"|\"reload\"|\"restore_session\"}\n\n"
 
                 "6. APP CONTROL:\n"
                 "   {\"action\": \"open_app\", \"target\": \"chrome\"}\n"
@@ -96,7 +98,7 @@ class GroqLLMEngine:
                 "   {\"action\": \"get_system_info\"}\n"
                 "   {\"action\": \"take_screenshot\"}\n\n"
 
-                "7. WINDOW CONTROL (minimize/maximize/restore/focus/snap/split):\n"
+                "7. WINDOW & WORKSPACE CONTROL (snap/split/monitors/tiling/profiles):\n"
                 "   {\"action\": \"minimize_window\", \"target\": \"chrome\"}\n"
                 "   {\"action\": \"maximize_window\", \"target\": \"notepad\"}\n"
                 "   {\"action\": \"restore_window\",  \"target\": \"spotify\"}\n"
@@ -104,6 +106,10 @@ class GroqLLMEngine:
                 "   {\"action\": \"close_window\",    \"target\": \"discord\"}\n"
                 "   {\"action\": \"snap_window\",     \"target\": \"vs code\", \"position\": \"left\"|\"right\"|\"top\"|\"bottom\"}\n"
                 "   {\"action\": \"split_screen\",    \"left_target\": \"vs code\", \"right_target\": \"spotify\"}\n"
+                "   {\"action\": \"move_to_monitor\", \"target\": \"chrome\", \"monitor\": 2, \"position\": \"maximized\"|\"left\"|\"right\"}\n"
+                "   {\"action\": \"tile_all_windows\"}\n"
+                "   {\"action\": \"verify_window_state\", \"target\": \"vs code\"}\n"
+                "   {\"action\": \"launch_workspace_profile\", \"profile\": \"Coding\"|\"Study\"|\"Gaming\"|\"Movie\"|\"Streaming\"|\"Meeting\"}\n"
                 "   {\"action\": \"list_windows\"}\n\n"
 
                 "8. TIMERS & SCHEDULING:\n"

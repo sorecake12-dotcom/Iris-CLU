@@ -149,7 +149,7 @@ def close_browser_target(target: str = "current_tab") -> str:
 
 
 def execute_tab_action(sub_action: str) -> str:
-    """Manage browser tabs (new_tab, close_tab, switch_tab, reload)."""
+    """Manage browser tabs (new_tab, close_tab, switch_tab, reload, pin_tab, restore_session)."""
     act = sub_action.lower().strip()
     bring_browser_to_foreground()
     time.sleep(0.3)
@@ -167,8 +167,21 @@ def execute_tab_action(sub_action: str) -> str:
         elif act in ["reload", "refresh"]:
             pyautogui.hotkey('ctrl', 'r')
             return "Reloaded active page."
+        elif act in ["restore_session", "restore_tab", "reopen", "undo_close"]:
+            pyautogui.hotkey('ctrl', 'shift', 't')
+            return "Restored closed browser tab / session."
 
     return f"Browser tab action '{act}' executed."
+
+
+def restore_browser_session() -> str:
+    """Restore recently closed browser tab or previous session."""
+    bring_browser_to_foreground()
+    time.sleep(0.3)
+    if HAS_PYAUTOGUI:
+        pyautogui.hotkey('ctrl', 'shift', 't')
+        return "Restored closed browser tab / session (Ctrl+Shift+T)."
+    return "Browser session restore requested."
 
 
 def fill_form_text(selector_or_text: str) -> str:

@@ -197,6 +197,12 @@ class CommandProcessor:
         elif cmd_lower in ["/processes", "/ps", "list processes", "show processes", "running processes"]:
             return self.cmd_list_processes()
 
+        elif cmd_lower in ["/workspace", "/profile", "/workspaces", "workspace", "profiles"] or cmd_lower.startswith("/workspace ") or cmd_lower.startswith("/profile "):
+            return self.cmd_workspace(user_input)
+
+        elif cmd_lower in ["/tile", "tile windows", "tile all windows"]:
+            return self.cmd_tile()
+
         elif cmd_lower.startswith("/"):
             ui.print_error(f"Unknown command '{user_input}'. Type [bold white]/help[/bold white] for command matrix.")
             return True
@@ -773,7 +779,55 @@ class CommandProcessor:
                 voice_engine.speak(res)
                 return True
 
+        # Workspace Profiles NLP fast-path
+        profile_matches = {
+            "coding mode": "coding", "coding workspace": "coding",
+            "study mode": "study", "study workspace": "study",
+            "gaming mode": "gaming", "gaming workspace": "gaming",
+            "movie mode": "movie", "cinema mode": "movie",
+            "streaming mode": "streaming",
+            "meeting mode": "meeting", "conference mode": "meeting"
+        }
+        for kw, prof in profile_matches.items():
+            if kw in cmd_lower:
+                from workspace_manager import workspace_manager
+                res = workspace_manager.launch_profile(prof)
+                console.print(f"\n[bold cyan]{res}[/bold cyan]\n")
+                voice_engine.speak(f"Activated {prof.capitalize()} workspace profile.")
+                return True
+
+        if cmd_lower in ["tile windows", "tile all windows", "grid layout"]:
+            from workspace_manager import workspace_manager
+            res = workspace_manager.tile_all_windows()
+            console.print(f"\n[bold cyan]{res}[/bold cyan]\n")
+            return True
+
         return False
+
+    def cmd_workspace(self, command_str: str = ""):
+        parts = command_str.split(maxsplit=1)
+        profile_name = parts[1].strip() if len(parts) > 1 else ""
+        from workspace_manager import workspace_manager
+        if not profile_name:
+            console.print("\n[bold cyan][WORKSPACE PROFILES][/bold cyan]")
+            console.print("  💻  Coding Mode     → say 'start coding mode' or '/workspace coding'")
+            console.print("  📚  Study Mode      → say 'start study mode' or '/workspace study'")
+            console.print("  🎮  Gaming Mode     → say 'start gaming mode' or '/workspace gaming'")
+            console.print("  🎬  Movie Mode      → say 'start movie mode' or '/workspace movie'")
+            console.print("  📡  Streaming Mode  → say 'start streaming mode' or '/workspace streaming'")
+            console.print("  🎙  Meeting Mode    → say 'start meeting mode' or '/workspace meeting'")
+            console.print("[dim]  Usage: /workspace [coding|study|gaming|movie|streaming|meeting][/dim]\n")
+            return True
+        res = workspace_manager.launch_profile(profile_name)
+        console.print(f"\n[bold cyan]{res}[/bold cyan]\n")
+        voice_engine.speak(f"Activated {profile_name} workspace profile.")
+        return True
+
+    def cmd_tile(self):
+        from workspace_manager import workspace_manager
+        res = workspace_manager.tile_all_windows()
+        console.print(f"\n[bold cyan]{res}[/bold cyan]\n")
+        return True
 
     # ── Coding Mode handler ───────────────────────────────────────────────────
 

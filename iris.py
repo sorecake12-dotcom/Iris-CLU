@@ -70,6 +70,7 @@ class IrisCLI:
             "/calc", "/time", "/history", "/clear", "/about", "/exit", "quit",
             "/code", "/memory", "/clearmemory", "/listen",
             "/clip", "/windows", "/prefs", "/screen", "/processes", "/ps",
+            "/workspace", "/profile", "/tile",
             "configure api", "update groq api", "update gemini api",
             "show api status", "disable groq", "disable gemini", "reset api configuration",
         ]

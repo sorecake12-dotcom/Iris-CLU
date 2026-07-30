@@ -27,6 +27,7 @@ from browser_automation import open_multiple_websites, browser_search, execute_t
 from debug_logger import debug_log, log_json_payload, log_exception
 from file_engine import file_engine, resolve_path as fe_resolve
 from window_manager import window_manager
+from workspace_manager import workspace_manager
 from terminal_engine import terminal_engine
 from screen_engine import screen_engine
 from clipboard_engine import clipboard_engine
@@ -270,7 +271,7 @@ class WindowsAutomationEngine:
         r.register("restore_recycle_bin",self._handle_restore_recycle_bin)
         r.register("empty_recycle_bin",  self._handle_empty_recycle_bin)
 
-        # ── Window Manager ────────────────────────────────────────
+        # ── Window & Workspace Manager ────────────────────────────
         r.register("minimize_window",    self._handle_minimize_window)
         r.register("maximize_window",    self._handle_maximize_window)
         r.register("restore_window",     self._handle_restore_window)
@@ -281,6 +282,12 @@ class WindowsAutomationEngine:
         r.register("snap_window",        self._handle_snap_window)
         r.register("split_screen",       self._handle_split_screen)
         r.register("position_window",    self._handle_position_window)
+        r.register("move_to_monitor",    self._handle_move_to_monitor)
+        r.register("tile_all_windows",   self._handle_tile_all_windows)
+        r.register("verify_window_state",self._handle_verify_window_state)
+        r.register("launch_workspace_profile", self._handle_launch_workspace_profile)
+        r.register("execute_workflow",   self._handle_execute_workflow)
+        r.register("restore_browser_session", self._handle_restore_browser_session)
 
         # ── Terminal Engine ───────────────────────────────────────
         r.register("run_terminal_command", self._handle_run_terminal)
@@ -1041,6 +1048,34 @@ class WindowsAutomationEngine:
         h = int(data.get("height", 1080))
         return window_manager.set_window_geometry(target, x, y, w, h)
 
+    def _handle_launch_workspace_profile(self, data: dict) -> str:
+        profile = data.get("profile") or data.get("name") or data.get("target") or "coding"
+        return workspace_manager.launch_profile(profile)
+
+    def _handle_move_to_monitor(self, data: dict) -> str:
+        target = self._get_window_target(data)
+        mon = int(data.get("monitor", data.get("monitor_index", 1)))
+        pos = data.get("position", "maximized")
+        return workspace_manager.move_to_monitor(target, mon, pos)
+
+    def _handle_tile_all_windows(self, data: dict) -> str:
+        return workspace_manager.tile_all_windows()
+
+    def _handle_verify_window_state(self, data: dict) -> str:
+        target = self._get_window_target(data)
+        ok, msg = workspace_manager.verify_window_state(target, timeout=3.0)
+        return msg
+
+    def _handle_execute_workflow(self, data: dict) -> str:
+        steps = data.get("steps") or data.get("actions") or []
+        if not steps:
+            return "No workflow steps provided."
+        return workspace_manager.execute_workflow(steps)
+
+    def _handle_restore_browser_session(self, data: dict) -> str:
+        from browser_automation import restore_browser_session
+        return restore_browser_session()
+
     # =========================================================================
     # TERMINAL ENGINE HANDLERS
     # =========================================================================
@@ -1172,19 +1207,33 @@ automation_engine = WindowsAutomationEngine()
 
 
 def extract_action_intent(llm_response_text: str) -> dict | None:
-    """Extract structured JSON action payload from LLM markdown completion."""
+    """Extract structured JSON action payload or multi-step workflow array from LLM markdown completion."""
     if not llm_response_text:
         return None
 
-    json_match = re.search(r"```json\s*([\s\S]*?)\s*```", llm_response_text, re.IGNORECASE)
-    if json_match:
+    # Check for all ```json ... ``` blocks
+    json_blocks = re.findall(r"```json\s*([\s\S]*?)\s*```", llm_response_text, re.IGNORECASE)
+    extracted_actions = []
+
+    for block in json_blocks:
         try:
-            data = json.loads(json_match.group(1).strip())
-            if isinstance(data, dict) and "action" in data:
-                return data
+            data = json.loads(block.strip())
+            if isinstance(data, list):
+                valid_steps = [item for item in data if isinstance(item, dict) and "action" in item]
+                extracted_actions.extend(valid_steps)
+            elif isinstance(data, dict) and "action" in data:
+                if data["action"] == "execute_workflow" and "steps" in data:
+                    return data
+                extracted_actions.append(data)
         except Exception:
             pass
 
+    if len(extracted_actions) == 1:
+        return extracted_actions[0]
+    elif len(extracted_actions) > 1:
+        return {"action": "execute_workflow", "steps": extracted_actions}
+
+    # Inline single JSON fallback
     inline_match = re.search(r"\{\s*\"action\"\s*:\s*\"[^\"]+\"[\s\S]*?\}", llm_response_text)
     if inline_match:
         try:
