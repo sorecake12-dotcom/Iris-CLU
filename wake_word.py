@@ -1,8 +1,8 @@
 """
-IRIS AI - Real-Time Voice Mode Engine
-Continuous background listener with wake-word detection ("Hey IRIS"),
-push-to-talk hotkey (Ctrl + Space), acoustic feedback prevention, microphone status telemetry,
-automatic speech recording with VAD silence detection, and voice control commands.
+IRIS AI - Real-Time Voice Mode & Speech-to-Text Engine
+Fault-tolerant background listener with wake-word detection ("Hey IRIS"),
+push-to-talk hotkey (Ctrl + Space), automatic default microphone detection,
+ambient noise calibration, device selector, zero-spam error handling, and speech diagnostics.
 """
 
 import os
@@ -10,8 +10,12 @@ import sys
 import re
 import time
 import ctypes
+import traceback
 import threading
+from typing import List, Tuple, Optional
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 import config
 from voice_engine import voice_engine
@@ -49,14 +53,23 @@ def play_chime_sound():
         pass
 
 
+def play_error_beep():
+    """Play short error beep when speech is not recognized."""
+    try:
+        from ui import play_audio_beep
+        play_audio_beep(frequency=400, duration_ms=100)
+    except Exception:
+        pass
+
+
 class WakeWordListener:
     """
-    Real-Time Hands-Free Voice Engine for IRIS AI:
-    - Background listening thread (works globally anywhere in Windows).
-    - Status telemetry: 🎤 Idle | 🎤 Listening | 🎤 Processing | 🎤 Speaking.
-    - Push-to-Talk hotkey: Ctrl + Space.
-    - Acoustic feedback prevention (pauses mic while IRIS is speaking).
-    - Natural voice commands: "Stop listening", "Start listening", "Sleep", "Wake up".
+    Real-Time Hands-Free Voice Engine & Speech Recognizer for IRIS AI:
+    - Auto microphone detection & index selector (/mic list, /mic use <index>).
+    - Ambient noise calibration (1-2s calibration + dynamic thresholding).
+    - Extended timeouts: timeout=8s, phrase_time_limit=15s.
+    - Zero terminal spam (silent recovery to idle on ambient noise/silence timeouts).
+    - Microphones telemetry & STT debug diagnostics.
     """
 
     def __init__(self):
@@ -64,6 +77,12 @@ class WakeWordListener:
         self.mic_enabled = True
         self.is_sleeping = False
         self.current_status = "idle"  # "idle" | "listening" | "processing" | "speaking"
+        self.device_index: Optional[int] = config.get_config("MIC_DEVICE_INDEX", None)
+
+        self.last_audio_duration = 0.0
+        self.last_recognition_confidence = 1.0
+        self.last_exception_details = None
+        self.stt_engine_name = "Google Speech Recognition (Low-Latency)"
 
         self._thread = None
         self._stop_event = threading.Event()
@@ -83,6 +102,51 @@ class WakeWordListener:
         except Exception:
             return False
 
+    @staticmethod
+    def list_microphones() -> List[Tuple[int, str]]:
+        """List all available microphone input devices on the system."""
+        if not HAS_SR or not HAS_PYAUDIO:
+            return []
+        try:
+            mics = sr.Microphone.list_microphone_names()
+            return [(idx, name) for idx, name in enumerate(mics)]
+        except Exception as ex:
+            log_exception(ex, context="LIST_MICROPHONES")
+            return []
+
+    def get_selected_mic_info(self) -> Tuple[Optional[int], str]:
+        """Returns tuple of (device_index, device_name)."""
+        all_mics = self.list_microphones()
+        if not all_mics:
+            return None, "Default System Microphone"
+        if self.device_index is not None:
+            for idx, name in all_mics:
+                if idx == self.device_index:
+                    return idx, name
+        # Default microphone
+        return all_mics[0][0], all_mics[0][1]
+
+    def set_microphone_device(self, index: int) -> Tuple[bool, str]:
+        """Switch active microphone device index."""
+        all_mics = self.list_microphones()
+        valid_indices = [idx for idx, _ in all_mics]
+        if index not in valid_indices:
+            return False, f"Invalid device index {index}. Available indices: {valid_indices}"
+
+        self.device_index = index
+        config.set_config("MIC_DEVICE_INDEX", index)
+        selected_name = dict(all_mics).get(index, f"Device #{index}")
+
+        # Recalibrate with new mic
+        if self._recognizer:
+            try:
+                with sr.Microphone(device_index=self.device_index) as mic:
+                    self._recognizer.adjust_for_ambient_noise(mic, duration=1.2)
+            except Exception:
+                pass
+
+        return True, f"Switched active microphone to [{index}] {selected_name}."
+
     def get_status_badge(self) -> str:
         """Returns current microphone status badge for UI display."""
         if not self.mic_enabled:
@@ -101,7 +165,7 @@ class WakeWordListener:
         return status_map.get(self.current_status, "[dim green]🎤 Idle[/dim green]")
 
     def start(self) -> bool:
-        """Start background wake-word listening thread."""
+        """Start background wake-word listening thread with noise calibration."""
         if not HAS_SR or not HAS_PYAUDIO:
             console.print("[bold yellow][WAKE] Microphone dependencies missing (SpeechRecognition / PyAudio).[/bold yellow]")
             return False
@@ -110,15 +174,19 @@ class WakeWordListener:
             self._recognizer = sr.Recognizer()
             self._recognizer.energy_threshold = 300
             self._recognizer.dynamic_energy_threshold = True
+            self._recognizer.dynamic_energy_adjustment_damping = 0.15
+            self._recognizer.dynamic_energy_ratio = 1.5
             self._recognizer.pause_threshold = 0.8  # Silence detection threshold
 
-            with sr.Microphone() as mic:
-                self._recognizer.adjust_for_ambient_noise(mic, duration=0.4)
+            # Perform 1.5s ambient noise calibration on boot
+            with sr.Microphone(device_index=self.device_index) as mic:
+                self._recognizer.adjust_for_ambient_noise(mic, duration=1.5)
             self._microphone_ok = True
 
         except Exception as ex:
-            console.print("[bold yellow][WAKE] No microphone detected — voice mode disabled.[/bold yellow]")
+            console.print("[bold yellow][WAKE] Microphone initialization failed — voice mode disabled.[/bold yellow]")
             debug_log(f"Microphone init failed: {ex}", category="WAKE")
+            self.last_exception_details = traceback.format_exc()
             return False
 
         self._stop_event.clear()
@@ -135,7 +203,8 @@ class WakeWordListener:
         )
         self._thread.start()
 
-        console.print("[bold bright_cyan]🎤 Voice Mode Online — Say 'Hey IRIS' or press Ctrl+Space anywhere in Windows.[/bold bright_cyan]")
+        idx, name = self.get_selected_mic_info()
+        console.print(f"[bold bright_cyan]🎤 Voice Mode Online — Mic: [{idx if idx is not None else 0}] {name}[/bold bright_cyan]")
         debug_log("Real-time Voice Mode started", category="WAKE")
         return True
 
@@ -187,14 +256,14 @@ class WakeWordListener:
 
             # 4. Background Wake Word Detection
             try:
-                with sr.Microphone() as mic:
+                with sr.Microphone(device_index=self.device_index) as mic:
                     # Short ambient chunk to detect wake word
-                    audio = self._recognizer.listen(mic, timeout=1.5, phrase_time_limit=3.5)
+                    audio = self._recognizer.listen(mic, timeout=2.0, phrase_time_limit=4.0)
 
                 try:
                     text = self._recognizer.recognize_google(audio).lower().strip()
                 except (sr.UnknownValueError, sr.RequestError):
-                    continue
+                    continue  # Silent return on unrecognized ambient noise — zero spam!
 
                 if not text:
                     continue
@@ -209,16 +278,17 @@ class WakeWordListener:
                     debug_log(f"Wake word detected in: '{text}'", category="WAKE")
                     play_chime_sound()
 
-                    # Print status and speak natural confirmation
-                    console.print("\n[bold bright_cyan]🎤 Listening...[/bold bright_cyan] [dim](Say your command)[/dim]")
+                    # Print single-line indicator and speak prompt
+                    console.print("\n[bold bright_cyan]🎤 Listening...[/bold bright_cyan]")
                     voice_engine.speak("Yes Boss?")
 
                     # Automatically record command speech until silence
                     self._capture_speech_and_trigger(is_ptt=False)
 
             except sr.WaitTimeoutError:
-                continue
+                continue  # Silent return to idle when no speech detected — zero spam!
             except Exception as ex:
+                self.last_exception_details = traceback.format_exc()
                 log_exception(ex, context="VOICE_LOOP")
                 time.sleep(0.5)
 
@@ -226,14 +296,20 @@ class WakeWordListener:
         """Record command speech automatically until silence is detected, transcribe, and route."""
         self.current_status = "listening"
         try:
-            with sr.Microphone() as mic:
-                self._recognizer.adjust_for_ambient_noise(mic, duration=0.2)
-                cmd_audio = self._recognizer.listen(mic, timeout=6.0, phrase_time_limit=12.0)
+            with sr.Microphone(device_index=self.device_index) as mic:
+                self._recognizer.adjust_for_ambient_noise(mic, duration=0.8)
+                cmd_audio = self._recognizer.listen(mic, timeout=8.0, phrase_time_limit=15.0)
 
             self.current_status = "processing"
+            console.print("[bold bright_yellow]🎤 Processing...[/bold bright_yellow]")
+
+            start_t = time.time()
             cmd_text = self._recognizer.recognize_google(cmd_audio).strip()
+            self.last_audio_duration = round(time.time() - start_t, 2)
+            self.last_exception_details = None
 
             if cmd_text:
+                console.print(f"[bold green]✅ Recognized:[/bold green] \"{cmd_text}\"")
                 debug_log(f"Voice Command Captured: '{cmd_text}'", category="WAKE")
                 cmd_lower = cmd_text.lower()
 
@@ -267,10 +343,20 @@ class WakeWordListener:
                 self._trigger_event.set()
 
         except sr.WaitTimeoutError:
-            console.print("[dim yellow]🎤 No speech detected.[/dim yellow]")
+            # Silent return to idle on timeout — no spam!
+            pass
         except sr.UnknownValueError:
-            console.print("[dim yellow]🎤 Could not understand audio.[/dim yellow]")
+            console.print("[bold red]❌ Speech not recognized.[/bold red]")
+            play_error_beep()
+            self.last_exception_details = "UnknownValueError: Speech was audio but could not be parsed."
+        except sr.RequestError as req_err:
+            console.print(f"[bold red]❌ Speech service network error: {req_err}[/bold red]")
+            play_error_beep()
+            self.last_exception_details = f"RequestError: {req_err}"
         except Exception as ex:
+            console.print("[bold red]❌ Speech recognition error.[/bold red]")
+            play_error_beep()
+            self.last_exception_details = traceback.format_exc()
             log_exception(ex, context="VOICE_CAPTURE_FAILED")
         finally:
             self.current_status = "idle"
@@ -293,15 +379,25 @@ class WakeWordListener:
             play_chime_sound()
             console.print("[bold bright_cyan]🎤 Listening... Speak now.[/bold bright_cyan]")
             self.current_status = "listening"
-            with sr.Microphone() as mic:
-                self._recognizer.adjust_for_ambient_noise(mic, duration=0.3)
-                audio = self._recognizer.listen(mic, timeout=7.0, phrase_time_limit=12.0)
+            with sr.Microphone(device_index=self.device_index) as mic:
+                self._recognizer.adjust_for_ambient_noise(mic, duration=1.0)
+                audio = self._recognizer.listen(mic, timeout=8.0, phrase_time_limit=15.0)
+
             self.current_status = "processing"
+            console.print("[bold bright_yellow]🎤 Processing...[/bold bright_yellow]")
             text = self._recognizer.recognize_google(audio).strip()
-            console.print(f"[dim cyan]🎤 Recognized: '{text}'[/dim cyan]")
+            console.print(f"[bold green]✅ Recognized:[/bold green] \"{text}\"")
             return text
+        except sr.WaitTimeoutError:
+            console.print("[dim yellow]🎤 Timeout: No speech detected.[/dim yellow]")
+            return ""
+        except sr.UnknownValueError:
+            console.print("[bold red]❌ Speech not recognized.[/bold red]")
+            play_error_beep()
+            return ""
         except Exception as ex:
-            console.print(f"[dim yellow]🎤 Speech capture error: {ex}[/dim yellow]")
+            console.print(f"[bold red]❌ Speech capture error: {ex}[/bold red]")
+            play_error_beep()
             return ""
         finally:
             self.current_status = "idle"
