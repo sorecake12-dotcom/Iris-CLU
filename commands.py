@@ -84,6 +84,10 @@ class CommandProcessor:
             else:
                 self.pending_action = None
 
+        # Fast-path Media Controls & Global STOP Command Priority
+        if self._handle_media_control_fastpath(cmd_lower):
+            return True
+
         # Route slash commands
         if cmd_lower in ["/exit", "/quit", "exit", "quit", "bye"]:
             return self.cmd_exit()
@@ -97,8 +101,8 @@ class CommandProcessor:
         elif cmd_lower in ["/status", "/sys", "/sysinfo", "status", "sysinfo"]:
             return self.cmd_status()
 
-        elif cmd_lower in ["/voice", "voice"]:
-            return self.cmd_voice()
+        elif cmd_lower in ["/voice", "voice"] or cmd_lower.startswith("/voice "):
+            return self.cmd_voice(user_input)
 
         elif cmd_lower in ["/actions", "/automation", "automation"]:
             return self.cmd_automation()
@@ -341,19 +345,158 @@ class CommandProcessor:
         console.print(Panel(info_text, border_style=t["border"], title=f"[{t['accent']}][AUTOMATION TELEMETRY][/{t['accent']}]"))
         return True
 
-    def cmd_voice(self):
+    def _handle_media_control_fastpath(self, cmd_lower: str) -> bool:
+        """
+        High-priority instant media control & global STOP command handler.
+        Executes immediately without LLM delay and responds with ultra-short spoken phrases.
+        """
+        import random
+        from spotify_automation import play_spotify
+
+        # 1. Global STOP / PAUSE / SHUT UP / QUIET interrupt
+        if cmd_lower in ["stop", "pause", "shut up", "quiet", "stop music", "pause music", "stop speaking", "halt", "hush"]:
+            voice_engine.stop_speech()
+            play_spotify("pause")
+            reply = random.choice(["Paused.", "Music paused.", "Done.", "Stopped."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 2. PLAY / RESUME
+        if cmd_lower in ["play", "resume", "play music", "resume music", "start music"]:
+            voice_engine.stop_speech()
+            play_spotify("resume")
+            reply = random.choice(["Playing.", "Resuming.", "Music resumed."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 3. NEXT
+        if cmd_lower in ["next", "next song", "next track", "skip", "skip song"]:
+            voice_engine.stop_speech()
+            play_spotify("next")
+            reply = random.choice(["Next track.", "Skipped."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 4. PREVIOUS
+        if cmd_lower in ["previous", "previous song", "prev", "prev song", "previous track"]:
+            voice_engine.stop_speech()
+            play_spotify("prev")
+            reply = "Previous track."
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 5. MUTE
+        if cmd_lower in ["mute", "mute volume", "mute sound", "sound off"]:
+            voice_engine.stop_speech()
+            automation_engine.execute_action({"action": "set_volume", "level": 0}, confirmed=True)
+            reply = random.choice(["Muted.", "Sound off."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 6. UNMUTE
+        if cmd_lower in ["unmute", "unmute volume", "sound on"]:
+            voice_engine.stop_speech()
+            automation_engine.execute_action({"action": "set_volume", "level": 50}, confirmed=True)
+            reply = "Unmuted."
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 7. VOLUME UP
+        if cmd_lower in ["volume up", "louder", "increase volume", "turn it up"]:
+            voice_engine.stop_speech()
+            automation_engine.execute_action({"action": "set_volume", "level": 80}, confirmed=True)
+            reply = random.choice(["Volume increased.", "Volume up."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        # 8. VOLUME DOWN
+        if cmd_lower in ["volume down", "quieter", "decrease volume", "turn it down"]:
+            voice_engine.stop_speech()
+            automation_engine.execute_action({"action": "set_volume", "level": 30}, confirmed=True)
+            reply = random.choice(["Volume decreased.", "Volume down."])
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] {reply}\n")
+            voice_engine.speak(reply)
+            return True
+
+        return False
+
+    def cmd_voice(self, command_str: str = ""):
+        parts = command_str.split(maxsplit=2)
+        subcmd = parts[1].lower() if len(parts) > 1 else "status"
+
+        if subcmd in ["on", "enable"]:
+            config.VOICE_ENABLED = True
+            console.print("\n[bold green]✓ Voice response ENABLED[/bold green]\n")
+            voice_engine.speak("Voice enabled.")
+            return True
+        elif subcmd in ["off", "disable"]:
+            config.VOICE_ENABLED = False
+            voice_engine.stop_speech()
+            console.print("\n[bold yellow]✓ Voice response DISABLED[/bold yellow]\n")
+            return True
+        elif subcmd in ["toggle"]:
+            config.VOICE_ENABLED = not config.VOICE_ENABLED
+            state = "ENABLED" if config.VOICE_ENABLED else "DISABLED"
+            console.print(f"\n[bold green]✓ Voice response {state}[/bold green]\n")
+            if config.VOICE_ENABLED:
+                voice_engine.speak("Voice enabled.")
+            return True
+        elif subcmd in ["rate", "speed"]:
+            if len(parts) > 2:
+                try:
+                    r = float(parts[2])
+                    config.SPEECH_RATE = r
+                    pct = int((r - 1.0) * 100)
+                    config.EDGE_TTS_RATE = f"+{pct}%" if pct >= 0 else f"{pct}%"
+                    config.PYTTSX3_WPM = int(175 * r)
+                    console.print(f"\n[bold green]✓ Speech rate set to {r}x ({config.EDGE_TTS_RATE})[/bold green]\n")
+                    voice_engine.speak(f"Speech rate updated to {r}x.")
+                    return True
+                except ValueError:
+                    pass
+            console.print(f"\n[dim cyan]Current Speech Rate: {config.SPEECH_RATE}x ({config.EDGE_TTS_RATE})[/dim cyan]")
+            console.print("[dim]Usage: /voice rate 1.25  (set 1.25x speed)[/dim]\n")
+            return True
+        elif subcmd in ["short"]:
+            if len(parts) > 2:
+                val = parts[2].lower()
+                config.SPEAK_SHORT_RESPONSES_ONLY = val in ["on", "true", "yes", "1"]
+            else:
+                config.SPEAK_SHORT_RESPONSES_ONLY = not config.SPEAK_SHORT_RESPONSES_ONLY
+            st = "ENABLED" if config.SPEAK_SHORT_RESPONSES_ONLY else "DISABLED"
+            console.print(f"\n[bold green]✓ Ultra-short responses mode {st}[/bold green]\n")
+            return True
+
         voice_engine.scan_and_load_voice(verbose=False)
-        status_str = "CLONED VOICE ACTIVE" if voice_engine.cloning_active else "STANDARD TTS FALLBACK"
-        ref_file = voice_engine.current_voice_file if voice_engine.current_voice_file else "None (Add voice sample to VOICE_DIRECTORY)"
+        status_str = "CLONED VOICE ACTIVE" if voice_engine.cloning_active else "STANDARD TTS (Edge / SAPI5)"
+        ref_file = voice_engine.current_voice_file if voice_engine.current_voice_file else "None (Add sample to voice/)"
 
         voice_info = (
-            f"### :: LOCAL VOICE CLONING STATUS ::\n\n"
+            f"### :: IRIS VOICE TELEMETRY & SETTINGS ::\n\n"
+            f"* **Voice Enabled:** `{'YES' if config.VOICE_ENABLED else 'NO'}`\n"
+            f"* **Speech Rate:** `{config.SPEECH_RATE}x` ({config.EDGE_TTS_RATE})\n"
+            f"* **Short Spoken Responses:** `{'ON (Concise)' if config.SPEAK_SHORT_RESPONSES_ONLY else 'OFF (Full)'}`\n"
+            f"* **Voice Volume:** `{int(config.VOICE_VOLUME * 100)}%`\n"
+            f"* **Expressiveness:** `{config.EXPRESSIVENESS.capitalize()}`\n"
             f"* **Voice Mode:** `{status_str}`\n"
             f"* **Reference Voice:** `{ref_file}`\n"
-            f"* **Directory Watched:** `{voice_engine.voice_dir}`\n"
-            f"* **Source Path:** `{voice_engine.source_path}`\n"
         )
-        console.print(Panel(voice_info, border_style="cyan", title="[bold cyan][VOICE TELEMETRY][/bold cyan]"))
+        console.print(Panel(voice_info, border_style="cyan", title="[bold cyan][VOICE CONFIGURATION][/bold cyan]"))
         return True
 
     def cmd_status(self):
@@ -673,11 +816,13 @@ class CommandProcessor:
 
             ui.render_action_telemetry(exec_result, theme_key=self.cli.current_theme)
 
-            # Trigger spoken result
+            # Trigger natural, concise spoken confirmation
             if exec_result.get("status") == "success":
-                voice_engine.speak(f"Executed action {action_intent.get('action')}")
+                act = action_intent.get("action", "")
+                tgt = action_intent.get("target") or action_intent.get("name") or action_intent.get("query") or ""
+                voice_engine.speak_action_confirm(act, tgt)
             elif exec_result.get("status") == "failed":
-                voice_engine.speak(f"Action failed: {exec_result.get('reason')}")
+                voice_engine.speak("Action could not be completed.")
 
     # =========================================================================
     # NEW COMMAND HANDLERS — Phase 5

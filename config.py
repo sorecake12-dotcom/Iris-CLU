@@ -90,3 +90,15 @@ BOOT_MESSAGES = [
     "Synchronizing Subsystem Matrices...",
     "IRIS AI Neural Network Online."
 ]
+
+# ── Voice & Speech Engine Settings ──
+VOICE_ENABLED = True
+SPEAK_SHORT_RESPONSES_ONLY = True   # Spoken replies are ultra-concise (default ON)
+SPEECH_RATE = 1.25                  # Speech rate multiplier (1.25x = +25% faster)
+EDGE_TTS_RATE = "+25%"              # Edge TTS rate parameter (+25% faster)
+PYTTSX3_WPM = 220                   # pyttsx3 fallback WPM (220 WPM)
+VOICE_VOLUME = 1.0                  # Volume scale (0.0 - 1.0)
+VOICE_PITCH = "+0Hz"                # Pitch adjustment
+EXPRESSIVENESS = "natural"           # Natural expressiveness mode
+SILENT_ROUTINE_ACTIONS = True       # Skip speech for routine actions (copy, paste, min, max, etc.)
+

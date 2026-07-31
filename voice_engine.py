@@ -167,46 +167,121 @@ class VoiceEngine:
 
     def prepare_speech_text(self, text: str) -> str:
         """
-        Sanitizes and extracts a short, natural speech version for TTS:
-        - Removes code blocks, URLs, markdown symbols, and headings.
-        - Keeps up to 2-4 key conversational sentences (max ~50 words) for natural speech.
+        Sanitizes and extracts a short, natural, human-like speech version for TTS:
+        - Removes code blocks, URLs, file paths, JSON data, debug info, robotic preamble phrases.
+        - Truncates long text to concise 1-2 sentence spoken summaries (~15-20 words max).
         """
-        if not text:
+        if not text or not getattr(config, "VOICE_ENABLED", True):
             return ""
 
-        text = re.sub(r"```[\s\S]*?```", " Code block provided on screen. ", text)
+        # 1. Strip raw code blocks — do NOT read code aloud
+        if "```" in text:
+            text = re.sub(r"```[\s\S]*?```", " Code generated on screen. ", text)
+        
+        # 2. Strip inline code, URLs, file paths, JSON
         text = re.sub(r"`[^`]*`", "", text)
-        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         text = re.sub(r"https?://\S+", "", text)
+        text = re.sub(r"[A-Za-z]:\\[^\s]+", "", text)
+        text = re.sub(r"file://\S+", "", text)
+        text = re.sub(r"\{\s*\"action\"\s*:\s*\"[^\"]+\"[\s\S]*?\}", "", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         text = re.sub(r"^[#\-\*\+]+\s*", "", text, flags=re.MULTILINE)
         text = re.sub(r"[#*_\-+=~|\\\[\]]", " ", text)
         text = re.sub(r"\[::\]|\[\+\]|\[VOICE\]|\[LLM\]|\[TTS\]|\[AUDIO\]|❖", "", text)
-        text = re.sub(r"\s+", " ", text).strip()
 
+        # 3. Strip robotic preamble filler phrases
+        robotic_phrases = [
+            r"I'll now search for\s*",
+            r"I will now search for\s*",
+            r"I'll search for\s*",
+            r"Executing action\s*",
+            r"Executed action\s*",
+            r"Action completed\s*",
+            r"Command completed successfully\s*",
+            r"I shall now proceed to\s*",
+            r"I will now proceed to\s*",
+            r"I have successfully\s*",
+            r"It appears that\s*",
+            r"Certainly Boss\s*,?",
+            r"DISAMBIGUATION_REQUIRED",
+        ]
+        for pattern in robotic_phrases:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+
+        text = re.sub(r"\s+", " ", text).strip()
         if not text:
             return ""
 
+        # If it's a short numeric/math output (e.g. "3245"), preserve as is
+        if re.match(r"^[\d\.\,\s\+\-\*\/\=]+$", text):
+            return text
+
+        # 4. Short responses mode (default ON) — pick 1 concise sentence or max 20 words
+        if getattr(config, "SPEAK_SHORT_RESPONSES_ONLY", True):
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+            spoken_text = sentences[0] if sentences else text
+            words = spoken_text.split()
+            if len(words) > 20:
+                spoken_text = " ".join(words[:20]) + "."
+            return spoken_text
+
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-        selected_sentences = sentences[:3]
+        selected_sentences = sentences[:2]
         spoken_text = " ".join(selected_sentences)
-
         words = spoken_text.split()
-        if len(words) > 55:
-            spoken_text = " ".join(words[:55]) + "."
-
+        if len(words) > 35:
+            spoken_text = " ".join(words[:35]) + "."
         return spoken_text
 
     def speak(self, text: str):
         """Enqueue prepared assistant response for speech synthesis."""
+        if not getattr(config, "VOICE_ENABLED", True):
+            return
+
         cleaned_speech = self.prepare_speech_text(text)
         if not cleaned_speech:
             return
 
         self.interrupt_event.clear()
+        self.speech_queue.put(cleaned_speech)
 
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned_speech) if s.strip()]
-        for sentence in sentences:
-            self.speech_queue.put(sentence)
+    def speak_action_confirm(self, action_name: str, target: str = ""):
+        """Speak an ultra-short, natural, human-like confirmation response."""
+        if not getattr(config, "VOICE_ENABLED", True):
+            return
+
+        import random
+        act = action_name.lower().strip()
+
+        # Routine instant actions — remain silent if configured
+        routine_actions = ["copy_item", "write_clipboard", "minimize_window", "maximize_window", "clear_clipboard"]
+        if act in routine_actions and getattr(config, "SILENT_ROUTINE_ACTIONS", True):
+            return
+
+        phrase_map = {
+            "pause_spotify": ["Paused.", "Music paused.", "Done."],
+            "play_spotify": ["Playing.", "Resuming.", "Music resumed."],
+            "resume_spotify": ["Playing.", "Resuming.", "Music resumed."],
+            "next_song": ["Next track.", "Skipped."],
+            "prev_song": ["Previous track."],
+            "send_message": ["Message sent.", "Sent."],
+            "create_file": ["Created.", "File created."],
+            "create_folder": ["Folder created.", "Created."],
+            "delete_item": ["Deleted.", "Item removed."],
+            "take_screenshot": ["Screenshot taken.", "Captured."],
+            "open_website": [f"Opening {target.title()}." if target else "Opening website."],
+            "open_app": [f"Opening {target.title()}." if target else "Opening application."],
+            "set_timer": ["Timer started.", "Timer set."],
+            "cancel_timer": ["Timer cancelled."],
+        }
+
+        phrases = phrase_map.get(act)
+        if phrases:
+            self.speak(random.choice(phrases))
+        elif target:
+            self.speak(f"Opening {target.title()}." if "open" in act else "Done.")
+        else:
+            self.speak("Done.")
 
     def stop_speech(self):
         """Interrupt active speech playback immediately and clear queue."""
@@ -228,6 +303,10 @@ class VoiceEngine:
             except queue.Empty:
                 continue
 
+            if not getattr(config, "VOICE_ENABLED", True):
+                self.speech_queue.task_done()
+                continue
+
             self.interrupt_event.clear()
             self.is_playing = True
 
@@ -246,20 +325,22 @@ class VoiceEngine:
                     last_error = e
                     log_exception(e, context=f"SPEECH_PLAYBACK_ATTEMPT_{attempt}")
                     if attempt < max_retries:
-                        time.sleep(0.1)
+                        time.sleep(0.05)
 
             if not played_successfully and not self.interrupt_event.is_set() and last_error:
-                console.print(f"[bold red][AUDIO ERROR] Speech playback failed: {last_error}[/bold red]")
+                debug_log(f"Speech playback notice: {last_error}", category="VOICE")
 
             self.is_playing = False
             self.speech_queue.task_done()
 
     def _create_thread_pyttsx3_engine(self):
-        """Create a fresh pyttsx3 engine instance bound to the current worker thread."""
+        """Create a fresh pyttsx3 engine instance bound to current worker thread with fast rate."""
         import pyttsx3
         engine = pyttsx3.init()
-        engine.setProperty("rate", 175)
-        engine.setProperty("volume", 1.0)
+        wpm = getattr(config, "PYTTSX3_WPM", 220)
+        vol = getattr(config, "VOICE_VOLUME", 1.0)
+        engine.setProperty("rate", wpm)
+        engine.setProperty("volume", vol)
         try:
             voices = engine.getProperty("voices")
             for voice in voices:
@@ -272,8 +353,7 @@ class VoiceEngine:
 
     def _synthesize_and_play(self, sentence: str):
         """
-        Synthesize audio using custom cloned reference voice from PROJECT_VOICE_PATH.
-        Guarantees custom reference voice is passed directly to voice-cloning model.
+        Synthesize audio using cloned voice, Edge TTS (high quality + fast rate), or pyttsx3 fallback.
         """
         if self.interrupt_event.is_set() or not sentence.strip():
             return
@@ -284,7 +364,6 @@ class VoiceEngine:
         if self.cloning_active and self.current_voice_file and self.xtts_model:
             if config.DEBUG_MODE:
                 console.print("[dim cyan][TTS] Using cloned voice[/dim cyan]")
-                console.print("[dim green][AUDIO] Playback started[/dim green]")
 
             import tempfile
             import sounddevice as sd
@@ -308,16 +387,11 @@ class VoiceEngine:
                     if self.interrupt_event.is_set():
                         sd.stop()
                         break
-                    time.sleep(0.04)
+                    time.sleep(0.03)
 
-                if config.DEBUG_MODE:
-                    console.print("[dim green][AUDIO] Playback completed[/dim green]")
                 return
             except Exception as ex:
-                if config.DEBUG_MODE:
-                    console.print(f"[bold red][VOICE ERROR] Synthesis failed with custom voice {self.current_voice_file}: {ex}[/bold red]")
                 log_exception(ex, context="CLONED_VOICE_SYNTHESIS")
-                raise ex
             finally:
                 if os.path.exists(temp_wav.name):
                     try:
@@ -325,7 +399,7 @@ class VoiceEngine:
                     except Exception:
                         pass
 
-        # 2. High-Quality Neural Voice Synthesis (Edge TTS)
+        # 2. High-Quality Neural Voice Synthesis (Edge TTS with fast speech rate)
         if not self.interrupt_event.is_set():
             try:
                 import asyncio
@@ -336,15 +410,22 @@ class VoiceEngine:
                 temp_mp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 temp_mp3.close()
 
+                rate_param = getattr(config, "EDGE_TTS_RATE", "+25%")
+                pitch_param = getattr(config, "VOICE_PITCH", "+0Hz")
+
                 async def _synth_edge():
-                    communicate = edge_tts.Communicate(sentence, "en-US-ChristopherNeural")
+                    communicate = edge_tts.Communicate(
+                        sentence,
+                        "en-US-ChristopherNeural",
+                        rate=rate_param,
+                        pitch=pitch_param
+                    )
                     await communicate.save(temp_mp3.name)
 
                 asyncio.run(_synth_edge())
 
                 if config.DEBUG_MODE:
                     console.print("[dim cyan][TTS] Using Neural Voice (en-US-ChristopherNeural)[/dim cyan]")
-                    console.print("[dim green][AUDIO] Playback started[/dim green]")
 
                 mci = ctypes.windll.winmm.mciSendStringW
                 alias = f"mp3_{int(time.time()*1000)}"
@@ -359,12 +440,10 @@ class VoiceEngine:
                     mci(f'status {alias} mode', buf, 128, 0)
                     if buf.value != "playing":
                         break
-                    time.sleep(0.05)
+                    time.sleep(0.04)
 
                 mci(f'close {alias}', None, 0, 0)
 
-                if config.DEBUG_MODE:
-                    console.print("[dim green][AUDIO] Playback completed[/dim green]")
                 if os.path.exists(temp_mp3.name):
                     try:
                         os.remove(temp_mp3.name)
@@ -374,20 +453,14 @@ class VoiceEngine:
             except Exception as edge_err:
                 log_exception(edge_err, context="EDGE_TTS_SYNTHESIS")
 
-        # 3. System SAPI5 TTS Fallback (pyttsx3)
+        # 3. System SAPI5 TTS Fallback (pyttsx3 with fast WPM)
         if not self.interrupt_event.is_set():
-            if config.DEBUG_MODE:
-                console.print("[dim yellow][TTS] Standard system TTS fallback active[/dim yellow]")
-                console.print("[dim green][AUDIO] Playback started[/dim green]")
-
             engine = self._create_thread_pyttsx3_engine()
             engine.say(sentence)
             engine.runAndWait()
             engine.stop()
 
-            if config.DEBUG_MODE:
-                console.print("[dim green][AUDIO] Playback completed[/dim green]")
-
 
 # Global Singleton Voice Engine
 voice_engine = VoiceEngine()
+
