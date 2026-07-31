@@ -33,18 +33,16 @@ from llm_engine import llm_engine
 from commands import CommandProcessor
 from task_scheduler import task_scheduler
 from memory import memory_store
-from wake_word import wake_word_listener
 
 console = Console()
 
 
 class IrisCLI:
-    def __init__(self, theme=config.DEFAULT_THEME, boot_anim=True, listen_mode=False):
-        self.current_theme  = theme if theme in config.THEMES else config.DEFAULT_THEME
-        self.boot_anim      = boot_anim
-        self.listen_mode    = listen_mode   # wake-word mode
-        self.processor      = CommandProcessor(self)
-        self.history        = InMemoryHistory()
+    def __init__(self, theme=config.DEFAULT_THEME, boot_anim=True):
+        self.current_theme   = theme if theme in config.THEMES else config.DEFAULT_THEME
+        self.boot_anim       = boot_anim
+        self.processor       = CommandProcessor(self)
+        self.history         = InMemoryHistory()
         self.session_started = False
 
         # Start background task scheduler
@@ -68,7 +66,7 @@ class IrisCLI:
             "/timers", "/tasks", "/schedule", "/canceltimer",
             "/theme jarvis", "/theme cyberpunk", "/theme matrix", "/theme solar",
             "/calc", "/time", "/history", "/clear", "/about", "/exit", "quit",
-            "/code", "/memory", "/clearmemory", "/listen",
+            "/code", "/memory", "/clearmemory",
             "/clip", "/windows", "/prefs", "/screen", "/processes", "/ps",
             "/workspace", "/profile", "/tile",
             "configure api", "update groq api", "update gemini api",
@@ -109,10 +107,6 @@ class IrisCLI:
         console.print(f"[{accent}]IRIS AI >[/{accent}]")
         console.print("Hey Boss! What would you like me to do today?\n")
 
-        # Start wake word listener if requested
-        if self.listen_mode:
-            wake_word_listener.start()
-
         # Initialize PromptSession
         session = PromptSession(
             history=self.history,
@@ -123,16 +117,7 @@ class IrisCLI:
         running = True
         try:
             while running:
-                # ── Wake word trigger check (non-blocking) ──
-                if self.listen_mode and wake_word_listener.is_listening:
-                    triggered, spoken_cmd = wake_word_listener.wait_for_trigger(timeout=0.05)
-                    if triggered and spoken_cmd:
-                        console.print(f"\n[bold bright_cyan][WAKE] Boss said:[/bold bright_cyan] {spoken_cmd}")
-                        voice_engine.stop_speech()
-                        running = self.processor.process(spoken_cmd)
-                        continue
-
-                # ── Standard keyboard input ──
+                # Standard keyboard input loop
                 try:
                     user_input = session.prompt(
                         "Boss > ",
@@ -154,8 +139,6 @@ class IrisCLI:
         finally:
             # Stop background services
             task_scheduler.stop()
-            if self.listen_mode:
-                wake_word_listener.stop()
 
             # Save session memory before exit
             if hasattr(llm_engine, "chat_history") and llm_engine.chat_history:
@@ -173,7 +156,6 @@ def main():
     )
     parser.add_argument("--no-boot",  action="store_true", help="Skip startup sequence")
     parser.add_argument("--debug","-d", action="store_true", help="Enable developer debug mode")
-    parser.add_argument("--listen", action="store_true", default=True, help="Enable wake-word listening mode ('Hey IRIS')")
     parser.add_argument("--code",    action="store_true", help="Boot directly into Coding Mode (Gemini)")
 
     args = parser.parse_args()
@@ -191,7 +173,6 @@ def main():
     app = IrisCLI(
         theme=args.theme,
         boot_anim=not args.no_boot,
-        listen_mode=args.listen,
     )
     app.run()
 

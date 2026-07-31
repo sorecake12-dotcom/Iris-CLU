@@ -147,43 +147,6 @@ class CommandProcessor:
         elif cmd_lower in ["/clearmemory", "clear memory", "forget everything", "wipe memory"]:
             return self.cmd_clearmemory()
 
-        # ── Real-Time Voice Mode & Mic Controls ──────────────────────
-        elif any(cmd_lower == phrase for phrase in [
-            "stop listening", "disable mic", "turn off mic", "disable microphone"
-        ]):
-            from wake_word import wake_word_listener
-            wake_word_listener.mic_enabled = False
-            console.print("\n[bold yellow]🎤 Microphone Disabled.[/bold yellow]\n")
-            voice_engine.speak("Microphone disabled.")
-            return True
-
-        elif any(cmd_lower == phrase for phrase in [
-            "start listening", "enable mic", "turn on mic", "enable microphone"
-        ]):
-            from wake_word import wake_word_listener
-            wake_word_listener.mic_enabled = True
-            console.print("\n[bold green]🎤 Microphone Enabled.[/bold green]\n")
-            voice_engine.speak("Microphone enabled.")
-            return True
-
-        elif any(cmd_lower == phrase for phrase in [
-            "sleep", "go to sleep"
-        ]):
-            from wake_word import wake_word_listener
-            wake_word_listener.is_sleeping = True
-            console.print("\n[bold yellow]🎤 IRIS is sleeping. Say 'Wake up' or press Ctrl+Space to activate.[/bold yellow]\n")
-            voice_engine.speak("Sleeping.")
-            return True
-
-        elif any(cmd_lower == phrase for phrase in [
-            "wake up", "wake up iris"
-        ]):
-            from wake_word import wake_word_listener
-            wake_word_listener.is_sleeping = False
-            console.print("\n[bold green]🎤 IRIS is awake and listening.[/bold green]\n")
-            voice_engine.speak("I'm awake Boss.")
-            return True
-
         # ── WhatsApp Call Controls ──────────────────────────────────
         elif cmd_lower in ["end call", "hang up", "disconnect call"]:
             automation_engine.execute_action({"action": "end_call"}, confirmed=True)
@@ -205,16 +168,6 @@ class CommandProcessor:
             console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] Call declined.\n")
             voice_engine.speak("Call declined.")
             return True
-
-        elif cmd_lower in ["/listen", "wake word"]:
-            return self.cmd_listen()
-
-        # ── Microphone & STT Debug Controls ─────────────────────────
-        elif cmd_lower in ["/voice debug", "voice debug"]:
-            return self.cmd_voice_debug()
-
-        elif cmd_lower.startswith("/mic") or cmd_lower in ["mic", "microphones", "microphone"]:
-            return self.cmd_mic(user_input)
 
         # ── API Configuration commands ──────────────────────────
         elif any(cmd_lower == phrase for phrase in [
@@ -415,93 +368,6 @@ class CommandProcessor:
             voice_engine.speak(msg)
         else:
             ui.print_error(msg)
-        return True
-
-    def cmd_listen(self):
-        """Trigger manual one-shot speech recognition capture."""
-        from wake_word import wake_word_listener
-        if not wake_word_listener.is_listening:
-            wake_word_listener.start()
-
-        spoken_cmd = wake_word_listener.capture_one_command()
-        if spoken_cmd:
-            console.print(f"\n[bold bright_cyan]🎤 Boss said:[/bold bright_cyan] {spoken_cmd}\n")
-            return self.process(spoken_cmd)
-        return True
-
-    def cmd_mic(self, command_str: str = ""):
-        from wake_word import wake_word_listener
-        parts = command_str.strip().split(maxsplit=2)
-        sub = parts[1].lower() if len(parts) > 1 else ""
-
-        if sub in ["list", "devices", "show"]:
-            mics = wake_word_listener.list_microphones()
-            if not mics:
-                console.print("\n[bold red]No microphones detected on system.[/bold red]\n")
-                return True
-            table = Table(title="[bold cyan][::] AVAILABLE MICROPHONE DEVICES [::][/bold cyan]")
-            table.add_column("Index", style="bold green", justify="center")
-            table.add_column("Device Name", style="bold white")
-            table.add_column("Status", style="bright_yellow")
-
-            sel_idx, _ = wake_word_listener.get_selected_mic_info()
-            for idx, name in mics:
-                is_active = (idx == sel_idx)
-                status_str = "ACTIVE DEVICE" if is_active else "Available"
-                style = "bold green" if is_active else "dim"
-                table.add_row(str(idx), name, f"[{style}]{status_str}[/{style}]")
-            console.print(table)
-            console.print("[dim]Usage: /mic use <number>  (e.g., /mic use 0)[/dim]\n")
-            return True
-
-        elif sub in ["use", "select", "set"] or sub.isdigit():
-            target_idx_str = parts[2] if len(parts) > 2 else sub
-            try:
-                idx = int(target_idx_str)
-                ok, msg = wake_word_listener.set_microphone_device(idx)
-                if ok:
-                    console.print(f"\n[bold green]✓ {msg}[/bold green]\n")
-                    voice_engine.speak(f"Switched microphone to device {idx}.")
-                else:
-                    console.print(f"\n[bold red]❌ {msg}[/bold red]\n")
-            except ValueError:
-                console.print("\n[bold red]Usage: /mic use <number> (e.g. /mic use 0)[/bold red]\n")
-            return True
-
-        # Default: /mic status diagnostics panel
-        sel_idx, sel_name = wake_word_listener.get_selected_mic_info()
-        all_mics = wake_word_listener.list_microphones()
-        threshold_val = getattr(wake_word_listener._recognizer, "energy_threshold", 300) if wake_word_listener._recognizer else "300 (Dynamic)"
-
-        info = (
-            f"### :: MICROPHONE DIAGNOSTICS & HARDWARE ::\n\n"
-            f"* **Selected Microphone:** `[{sel_idx if sel_idx is not None else 0}] {sel_name}`\n"
-            f"* **Available Microphones:** `{len(all_mics)} Devices Found`\n"
-            f"* **Input Volume / Energy Threshold:** `{threshold_val}`\n"
-            f"* **Recognition Engine:** `{wake_word_listener.stt_engine_name}`\n"
-            f"* **Status:** `{wake_word_listener.get_status_badge()}`\n"
-        )
-        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
-        console.print(Panel(info, border_style=t["border"], title=f"[{t['accent']}][MICROPHONE TELEMETRY][/{t['accent']}]"))
-        return True
-
-    def cmd_voice_debug(self):
-        from wake_word import wake_word_listener
-        sel_idx, sel_name = wake_word_listener.get_selected_mic_info()
-        last_err = wake_word_listener.last_exception_details or "None (Clean)"
-
-        debug_info = (
-            f"### :: STT VOICE RECOGNITION DEBUG DIAGNOSTICS ::\n\n"
-            f"* **STT Engine:** `{wake_word_listener.stt_engine_name}`\n"
-            f"* **Sample Rate:** `16000 Hz (Standard PCM)`\n"
-            f"* **Selected Microphone:** `[{sel_idx}] {sel_name}`\n"
-            f"* **Listening Timeouts:** `Timeout=8s, PhraseLimit=15s`\n"
-            f"* **Last Capture Duration:** `{wake_word_listener.last_audio_duration}s`\n"
-            f"* **Recognition Confidence:** `{wake_word_listener.last_recognition_confidence * 100:.1f}%`\n"
-            f"* **Last Exception Details:** `{last_err}`\n"
-        )
-        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
-        console.print(Panel(debug_info, border_style=t["border"], title=f"[{t['accent']}][STT DEBUG TELEMETRY][/{t['accent']}]"))
         return True
 
     def cmd_automation(self):
