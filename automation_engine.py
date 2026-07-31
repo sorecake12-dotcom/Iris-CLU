@@ -389,15 +389,9 @@ class WindowsAutomationEngine:
         res = app_discovery_service.launch_app(target)
 
         if res.get("status") == "success":
-            return res.get("details", f"Launched application: {target}")
+            return res.get("details", f"✓ {target.title()} opened.")
 
-        if res.get("reason") == "DISAMBIGUATION_REQUIRED":
-            candidates = res.get("candidates", [])
-            cand_details = [f"{idx}. {desc} (`{p}`)" for idx, (p, desc) in enumerate(candidates, 1)]
-            prompt_msg = f"I found multiple {target.title()} installations. Which one would you like to open?\n" + "\n".join(cand_details)
-            raise ValueError(f"DISAMBIGUATION_REQUIRED:\n{prompt_msg}")
-
-        raise ValueError(res.get("reason", f"Could not launch application '{target}'."))
+        raise ValueError(res.get("reason", f"I couldn't launch '{target}'."))
 
     def _handle_open_desktop_item(self, data: dict) -> str:
         target = data.get("target") or data.get("name")

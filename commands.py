@@ -844,27 +844,7 @@ class CommandProcessor:
 
             exec_result = automation_engine.execute_action(action_intent, confirmed=True)
 
-            # Handle Candidate Disambiguation Prompt if multiple app matches found
-            if exec_result.get("status") == "failed" and "DISAMBIGUATION_REQUIRED" in str(exec_result.get("reason")):
-                raw_reason = str(exec_result.get("reason"))
-                cands_str = raw_reason.replace("ValueError: DISAMBIGUATION_REQUIRED:\n", "").replace("DISAMBIGUATION_REQUIRED:\n", "")
-                console.print(f"\n[bold yellow][SELECT APPLICATION][/bold yellow] Multiple candidates found:\n{cands_str}")
-                try:
-                    choice = input("Enter number to select application [1-N]: ").strip()
-                    if choice.isdigit():
-                        idx = int(choice) - 1
-                        lines = [line.strip() for line in cands_str.split("\n") if line.strip()]
-                        if 0 <= idx < len(lines):
-                            sel_line = lines[idx]
-                            import re
-                            path_match = re.search(r"`([^`]+)`", sel_line)
-                            if path_match:
-                                sel_path = path_match.group(1)
-                                os.startfile(sel_path)
-                                exec_result = {"status": "success", "details": f"Launched selected application: {sel_path}", "action": "open_app"}
-                except Exception as ex:
-                    console.print(f"[bold red]Disambiguation selection cancelled: {ex}[/bold red]")
-
+            # Telemetry logging & UI rendering
             ui.render_action_telemetry(exec_result, theme_key=self.cli.current_theme)
 
             # Trigger natural, concise spoken confirmation

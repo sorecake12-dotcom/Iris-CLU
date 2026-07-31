@@ -2,7 +2,7 @@
 IRIS AI - Robust Application Discovery & Launch Engine
 Redesigned Application Discovery Service supporting multi-tiered search,
 shortcut resolution, registry indexing, window foregrounding for running apps,
-app caching, process verification, and multi-match disambiguation.
+persistent app path caching, process verification, helper filtering, and automatic priority resolution.
 """
 
 import os
@@ -26,14 +26,14 @@ from debug_logger import debug_log, log_exception
 BUILTIN_APPS: Dict[str, dict] = {
     "explorer": {
         "name": "File Explorer",
-        "aliases": ["explorer", "file explorer", "explorer.exe", "windows explorer", "my computer", "this pc"],
+        "aliases": ["explorer", "file explorer", "explorer.exe", "windows explorer", "my computer", "this pc", "files"],
         "path": r"C:\Windows\explorer.exe",
         "exec": "explorer.exe",
         "type": "executable"
     },
     "edge": {
         "name": "Microsoft Edge",
-        "aliases": ["edge", "microsoft edge", "msedge", "msedge.exe", "browser"],
+        "aliases": ["edge", "microsoft edge", "msedge", "msedge.exe"],
         "path": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         "fallback_paths": [
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -101,22 +101,30 @@ BUILTIN_APPS: Dict[str, dict] = {
     },
     "terminal": {
         "name": "Windows Terminal",
-        "aliases": ["wt", "windows terminal", "wt.exe"],
+        "aliases": ["wt", "windows terminal", "wt.exe", "terminal"],
         "path": os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe"),
         "exec": "WindowsTerminal.exe",
         "type": "executable"
     }
 }
 
-# Common App Aliases for Fast Resolution
+# Comprehensive App Alias Database
 APP_ALIASES: Dict[str, List[str]] = {
-    "chrome": ["chrome.exe", "Google Chrome"],
-    "google chrome": ["chrome.exe"],
-    "firefox": ["firefox.exe", "Mozilla Firefox"],
-    "vscode": ["code.exe", "Visual Studio Code", "Code"],
-    "code": ["code.exe"],
-    "vs code": ["code.exe"],
     "spotify": ["spotify.exe", "Spotify"],
+    "music": ["spotify.exe", "Spotify"],
+    "songs": ["spotify.exe", "Spotify"],
+    "song": ["spotify.exe", "Spotify"],
+    "chrome": ["chrome.exe", "Google Chrome"],
+    "google": ["chrome.exe", "Google Chrome"],
+    "google chrome": ["chrome.exe"],
+    "browser": ["chrome.exe", "msedge.exe", "firefox.exe"],
+    "firefox": ["firefox.exe", "Mozilla Firefox"],
+    "edge": ["msedge.exe", "Microsoft Edge"],
+    "microsoft edge": ["msedge.exe"],
+    "vscode": ["code.exe", "Visual Studio Code"],
+    "code": ["code.exe", "Visual Studio Code"],
+    "vs code": ["code.exe", "Visual Studio Code"],
+    "visual studio code": ["code.exe"],
     "whatsapp": ["whatsapp.exe", "WhatsApp"],
     "telegram": ["telegram.exe", "Telegram"],
     "discord": ["discord.exe", "Discord"],
@@ -130,6 +138,37 @@ APP_ALIASES: Dict[str, List[str]] = {
     "epic": ["EpicGamesLauncher.exe"],
     "epic games": ["EpicGamesLauncher.exe"]
 }
+
+# Patterns of helper / auxiliary / non-user executables to IGNORE
+HELPER_PATTERNS = [
+    r"_cli\.exe$", r"cli\.exe$", r"helper\.exe$", r"updater\.exe$", r"crash_handler\.exe$",
+    r"crashpad.*\.exe$", r"service\.exe$", r"launcher\.exe$", r"uninstall.*\.exe$",
+    r"setup\.exe$", r"install.*\.exe$", r"update\.exe$", r"nwjc\.exe$", r"elevate\.exe$",
+    r"migrate\.exe$", r"background.*\.exe$", r"daemon\.exe$", r"server\.exe$",
+    r"cef.*\.exe$", r"gpu.*\.exe$", r"worker.*\.exe$"
+]
+
+
+def is_helper_executable(exe_name_or_path: str) -> bool:
+    """Check whether executable is a background helper / CLI / updater process to ignore."""
+    if not exe_name_or_path or exe_name_or_path.startswith("ms-"):
+        return False
+    name = os.path.basename(exe_name_or_path).lower()
+    for pattern in HELPER_PATTERNS:
+        if re.search(pattern, name):
+            return True
+    return False
+
+
+def canonicalize_path(p: str) -> str:
+    """Normalize file path for strict case-insensitive deduplication."""
+    if p.startswith("ms-"):
+        return p.lower()
+    try:
+        real = os.path.realpath(p)
+        return os.path.normcase(os.path.abspath(real))
+    except Exception:
+        return os.path.normcase(os.path.abspath(p))
 
 
 def normalize_query(query: str) -> str:
@@ -189,7 +228,6 @@ def bring_window_to_foreground(process_name_or_exe: str) -> bool:
             pid = ctypes.c_ulong()
             ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value in matching_pids:
-                # Exclude toolbars / tiny windows
                 length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
                 if length > 0:
                     found_hwnd.append(hwnd)
@@ -200,8 +238,7 @@ def bring_window_to_foreground(process_name_or_exe: str) -> bool:
 
     if found_hwnd:
         target_hwnd = found_hwnd[0]
-        # SW_RESTORE = 9
-        ctypes.windll.user32.ShowWindow(target_hwnd, 9)
+        ctypes.windll.user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
         ctypes.windll.user32.SetForegroundWindow(target_hwnd)
         ctypes.windll.user32.BringWindowToTop(target_hwnd)
         return True
@@ -214,20 +251,19 @@ class ApplicationDiscoveryService:
 
     def __init__(self):
         self.cache_file = Path.home() / ".iris_app_index.json"
-        self.index_cache: Dict[str, List[Tuple[str, str]]] = {}
+        self.index_cache: Dict[str, dict] = {}
         self.load_cache()
 
     def _log_debug(self, stage: str, message: str):
-        """Format debug logs according to spec: [APP] Stage: message."""
-        if config.DEBUG_MODE:
-            console = config.THEMES.get(config.DEFAULT_THEME)
+        """Format debug logs according to spec."""
+        if getattr(config, "DEBUG_MODE", False):
             from rich.console import Console
             c = Console()
             c.print(f"[bold cyan][APP] {stage}[/bold cyan] [dim white]{message}[/dim white]")
         debug_log(f"{stage}: {message}", category="APP")
 
     def load_cache(self):
-        """Load persistent application cache if available."""
+        """Load persistent application cache from disk."""
         try:
             if self.cache_file.exists():
                 data = json.loads(self.cache_file.read_text(encoding="utf-8"))
@@ -243,88 +279,66 @@ class ApplicationDiscoveryService:
         except Exception:
             pass
 
-    def search_all_tiers(self, query: str) -> List[Tuple[str, str]]:
+    def search_all_tiers(self, query: str) -> List[Tuple[str, str, int]]:
         """
-        Search for applications across 7 structured tiers in order:
-        1. Built-in Windows Applications
-        2. Windows App Execution Aliases
-        3. Start Menu Shortcuts (User + System)
-        4. Desktop Shortcuts (User + Public)
-        5. Installed Programs & Registry (Uninstall + App Paths)
-        6. PATH Executables
-        7. Common Installation Folders
+        Search for applications across structured tiers in priority order:
+        Returns list of tuples: (canonical_path, description, priority_score)
         """
         q_norm = normalize_query(query)
         if not q_norm:
             return []
 
-        self._log_debug("Searching...", f"Query: '{query}' (Normalized: '{q_norm}')")
-
-        # Fast Cache Check
+        # Fast Persistent Cache Check
         if q_norm in self.index_cache:
-            cached_entries = self.index_cache[q_norm]
-            # Validate cached paths still exist
-            valid_cached = []
-            for path_str, desc in cached_entries:
-                if path_str.startswith("ms-") or os.path.exists(path_str):
-                    valid_cached.append((path_str, desc))
-            if valid_cached:
-                self._log_debug("Match found", f"Cache hit for '{q_norm}' ({len(valid_cached)} item(s))")
-                return valid_cached
+            entry = self.index_cache[q_norm]
+            if isinstance(entry, dict):
+                path_str = entry.get("path")
+                desc = entry.get("desc", f"Cached App '{q_norm}'")
+                if path_str and (path_str.startswith("ms-") or os.path.exists(path_str)):
+                    self._log_debug("Cache hit", f"Resolved '{q_norm}' -> {path_str}")
+                    return [(path_str, desc, 100)]
+            elif isinstance(entry, list) and entry:
+                first = entry[0]
+                if isinstance(first, (list, tuple)) and len(first) >= 2:
+                    p_str, d_str = first[0], first[1]
+                    if p_str and (p_str.startswith("ms-") or os.path.exists(p_str)):
+                        return [(p_str, d_str, 100)]
 
-        candidates: List[Tuple[str, str]] = []
-        seen_paths: Set[str] = set()
+        candidates: List[Tuple[str, str, int]] = []
+        seen_canon: Set[str] = set()
 
-        def add_candidate(path_val: str, desc: str):
-            clean_p = path_val if path_val.startswith("ms-") else os.path.abspath(path_val)
-            if clean_p not in seen_paths:
-                seen_paths.add(clean_p)
-                candidates.append((clean_p, desc))
+        def add_candidate(path_val: str, desc: str, score: int):
+            if is_helper_executable(path_val):
+                return
+            canon = canonicalize_path(path_val)
+            if canon not in seen_canon:
+                seen_canon.add(canon)
+                candidates.append((path_val, desc, score))
 
-        # ---------------------------------------------------------------------
-        # TIER 1: Built-in Windows Applications
-        # ---------------------------------------------------------------------
+        # TIER 1: Built-in Windows Applications (Score 90)
         for app_key, info in BUILTIN_APPS.items():
-            if q_norm == app_key or any(alias == q_norm or alias in q_norm for alias in info["aliases"]):
+            if q_norm == app_key or any(alias == q_norm for alias in info["aliases"]):
                 if info.get("protocol"):
-                    add_candidate(info["protocol"], f"Built-in Windows Protocol '{info['name']}'")
+                    add_candidate(info["protocol"], f"Built-in App '{info['name']}'", 90)
                 elif info.get("path") and os.path.exists(info["path"]):
-                    add_candidate(info["path"], f"Built-in Windows App '{info['name']}'")
+                    add_candidate(info["path"], f"Built-in App '{info['name']}'", 90)
                 elif info.get("fallback_paths"):
                     for fp in info["fallback_paths"]:
                         if os.path.exists(fp):
-                            add_candidate(fp, f"Built-in Windows App '{info['name']}'")
+                            add_candidate(fp, f"Built-in App '{info['name']}'", 90)
                             break
                 elif info.get("exec"):
                     w_path = shutil.which(info["exec"])
                     if w_path:
-                        add_candidate(w_path, f"Built-in Windows Executable '{info['name']}'")
+                        add_candidate(w_path, f"Built-in Executable '{info['name']}'", 90)
 
-        if candidates:
-            self._log_debug("Match found", f"Tier 1 (Built-in Apps): {candidates[0][1]}")
-            self.index_cache[q_norm] = candidates
-            self.save_cache()
-            return candidates
-
-        # ---------------------------------------------------------------------
-        # TIER 2: Windows App Execution Aliases
-        # ---------------------------------------------------------------------
-        winapps_dir = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
-        if winapps_dir.exists():
-            for exe in winapps_dir.glob("*.exe"):
-                if q_norm in exe.stem.lower():
-                    add_candidate(str(exe), f"App Execution Alias '{exe.name}'")
-
-        # ---------------------------------------------------------------------
-        # TIER 3: Start Menu Shortcuts (User + All Users)
-        # ---------------------------------------------------------------------
+        # TIER 2: Start Menu Shortcuts (Score 80)
         start_dirs = [
             Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs",
             Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs")
         ]
-
         aliases = APP_ALIASES.get(q_norm, [q_norm])
-        search_terms = [q_norm] + aliases
+        search_terms = list(dict.fromkeys([q_norm] + aliases))
 
         for s_dir in start_dirs:
             if not s_dir.exists():
@@ -333,50 +347,40 @@ class ApplicationDiscoveryService:
                 lnk_name_lower = lnk.stem.lower()
                 if any(term in lnk_name_lower for term in search_terms):
                     target = resolve_shortcut_target(str(lnk))
-                    add_candidate(target, f"Start Menu Shortcut '{lnk.name}'")
+                    if not is_helper_executable(target):
+                        add_candidate(target, f"Start Menu App '{lnk.stem}'", 80)
 
-        # ---------------------------------------------------------------------
-        # TIER 4: Desktop Shortcuts (User + Public)
-        # ---------------------------------------------------------------------
-        desktop_dirs = [
-            Path.home() / "Desktop",
-            Path(r"C:\Users\Public\Desktop")
-        ]
-
+        # TIER 3: Desktop Shortcuts (Score 70)
+        desktop_dirs = [Path.home() / "Desktop", Path(r"C:\Users\Public\Desktop")]
         for d_dir in desktop_dirs:
             if not d_dir.exists():
                 continue
             for item in d_dir.rglob("*"):
-                item_lower = item.name.lower()
-                if any(term in item_lower for term in search_terms):
+                if any(term in item.name.lower() for term in search_terms):
                     if item.suffix.lower() == ".lnk":
                         target = resolve_shortcut_target(str(item))
-                        add_candidate(target, f"Desktop Shortcut '{item.name}'")
-                    else:
-                        add_candidate(str(item), f"Desktop Item '{item.name}'")
+                        if not is_helper_executable(target):
+                            add_candidate(target, f"Desktop App '{item.stem}'", 70)
+                    elif item.suffix.lower() == ".exe":
+                        if not is_helper_executable(str(item)):
+                            add_candidate(str(item), f"Desktop App '{item.stem}'", 70)
 
-        # ---------------------------------------------------------------------
-        # TIER 5: Installed Programs & Registry Keys
-        # ---------------------------------------------------------------------
+        # TIER 4: Registry App Paths (Score 60)
         reg_keys = [
             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
             (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
             (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
         ]
-
         for root_key, sub_key in reg_keys:
             try:
                 with winreg.OpenKey(root_key, sub_key) as key:
                     num_subkeys = winreg.QueryInfoKey(key)[0]
                     for i in range(num_subkeys):
                         name = winreg.EnumKey(key, i)
-                        name_lower = name.lower()
-                        if any(term in name_lower for term in search_terms):
+                        if any(term in name.lower() for term in search_terms):
                             try:
                                 with winreg.OpenKey(key, name) as app_key:
-                                    # Try default value or InstallLocation / DisplayIcon
                                     path_val = None
                                     try:
                                         path_val, _ = winreg.QueryValueEx(app_key, "")
@@ -387,32 +391,29 @@ class ApplicationDiscoveryService:
                                             path_val, _ = winreg.QueryValueEx(app_key, "DisplayIcon")
                                         except Exception:
                                             pass
-
                                     if path_val:
-                                        # Strip quotes or comma arguments (e.g., C:\app.exe,0)
                                         clean_path = str(path_val).split(",")[0].strip('"')
                                         if clean_path and os.path.exists(clean_path):
-                                            add_candidate(clean_path, f"Registry Entry '{name}'")
+                                            add_candidate(clean_path, f"Registry App '{name}'", 60)
                             except Exception:
                                 pass
             except Exception:
                 pass
 
-        # ---------------------------------------------------------------------
-        # TIER 6: System PATH Executables
-        # ---------------------------------------------------------------------
-        which_exact = shutil.which(q_norm)
-        if which_exact:
-            add_candidate(which_exact, f"System PATH Executable '{os.path.basename(which_exact)}'")
-
+        # TIER 5: System PATH Executables (Score 50)
         for term in search_terms:
             w_p = shutil.which(term)
             if w_p:
-                add_candidate(w_p, f"System PATH Executable '{os.path.basename(w_p)}'")
+                add_candidate(w_p, f"PATH Executable '{os.path.basename(w_p)}'", 50)
 
-        # ---------------------------------------------------------------------
-        # TIER 7: Common Installation Folders
-        # ---------------------------------------------------------------------
+        # TIER 6: Windows App Execution Aliases (Score 40)
+        winapps_dir = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
+        if winapps_dir.exists():
+            for exe in winapps_dir.glob("*.exe"):
+                if any(term in exe.stem.lower() for term in search_terms):
+                    add_candidate(str(exe), f"Windows App '{exe.stem}'", 40)
+
+        # TIER 7: Common Installation Folders (Score 30)
         common_folders = [
             Path(r"C:\Program Files"),
             Path(r"C:\Program Files (x86)"),
@@ -420,7 +421,6 @@ class ApplicationDiscoveryService:
             Path.home() / "AppData" / "Roaming",
             Path(r"C:\Program Files (x86)\Steam\steamapps\common")
         ]
-
         for c_folder in common_folders:
             if not c_folder.exists():
                 continue
@@ -428,145 +428,94 @@ class ApplicationDiscoveryService:
                 for sub in c_folder.iterdir():
                     if sub.is_dir() and any(term in sub.name.lower() for term in search_terms):
                         for exe in sub.glob("*.exe"):
-                            add_candidate(str(exe), f"Installation Directory Executable '{exe.name}'")
-                            if len(candidates) >= 10:
+                            if not is_helper_executable(str(exe)):
+                                add_candidate(str(exe), f"Installed App '{sub.name}'", 30)
                                 break
-                        for exe in sub.glob("*/*.exe"):
-                            add_candidate(str(exe), f"Installation Directory Executable '{exe.name}'")
-                            if len(candidates) >= 10:
-                                break
-                    elif sub.is_file() and sub.suffix.lower() == ".exe":
-                        if any(term in sub.name.lower() for term in search_terms):
-                            add_candidate(str(sub), f"Installation Executable '{sub.name}'")
             except Exception:
                 pass
 
-        # Save discovered candidates to cache for future instant launches
-        if candidates:
-            self._log_debug("Match found", f"Discovered {len(candidates)} candidate(s) for '{q_norm}'")
-            self.index_cache[q_norm] = candidates
-            self.save_cache()
-
+        # Sort candidates by priority score descending
+        candidates.sort(key=lambda x: x[2], reverse=True)
         return candidates
 
-    def resolve_app(self, query: str) -> Tuple[Union[str, List[Tuple[str, str]], None], str]:
+    def resolve_app(self, query: str) -> Tuple[Optional[str], str]:
         """
-        Resolves query to a single path or candidate list.
-        Returns:
-            (path_str, description) if 1 match found
-            (candidates_list, "DISAMBIGUATION_REQUIRED") if multiple found
-            (None, "") if none found
+        Resolves query automatically to the single best priority application path.
+        Guarantees automatic resolution for Spotify, Chrome, Edge, WhatsApp, VS Code, Discord, etc.
         """
+        q_norm = normalize_query(query)
         candidates = self.search_all_tiers(query)
         if not candidates:
             return None, ""
 
-        if len(candidates) == 1:
-            exe_path, desc = candidates[0]
-            self._log_debug("Executable resolved", f"{desc} -> {exe_path}")
-            return exe_path, desc
+        # Auto-select the top-priority candidate
+        best_path, best_desc, _ = candidates[0]
 
-        # Multiple candidates found - check if one is an exact main executable match
-        q_norm = normalize_query(query)
-        exact_matches = []
-        for path_str, desc in candidates:
-            fn = os.path.basename(path_str).lower().replace(".exe", "")
-            if fn == q_norm:
-                exact_matches.append((path_str, desc))
+        # Save to persistent cache for instant launch next time
+        self.index_cache[q_norm] = {"path": best_path, "desc": best_desc}
+        self.save_cache()
 
-        if len(exact_matches) == 1:
-            exe_path, desc = exact_matches[0]
-            self._log_debug("Executable resolved", f"Exact match: {desc} -> {exe_path}")
-            return exe_path, desc
-
-        return candidates, "DISAMBIGUATION_REQUIRED"
+        self._log_debug("Resolved app", f"'{query}' -> {best_path} ({best_desc})")
+        return best_path, best_desc
 
     def launch_app(self, query: str) -> dict:
         """
-        Full Execution Pipeline:
-        1. Search and resolve target application executable or protocol.
-        2. Detect if app is already running -> bring window to foreground.
-        3. If not running, launch process safely.
-        4. Poll process telemetry for up to 3 seconds to verify actual launch.
+        Full Automatic App Launch Pipeline:
+        1. Check if application is ALREADY running -> bring top-level window to front.
+        2. Resolve target executable path using automatic priority engine.
+        3. Launch process cleanly.
+        4. Return clean natural status dict.
         """
+        q_norm = normalize_query(query)
         self._log_debug("Searching...", f"Target query: '{query}'")
 
-        resolved, desc_or_signal = self.resolve_app(query)
+        # Step 1: Running Window Check -> Focus immediately if already running!
+        if bring_window_to_foreground(q_norm):
+            self._log_debug("Window focused", f"Application '{query}' already running. Brought window to front.")
+            return {
+                "status": "success",
+                "details": f"✓ {query.title()} opened.",
+                "action": "open_app"
+            }
 
-        if not resolved:
-            return {"status": "failed", "reason": f"Could not locate application '{query}' on system."}
+        # Step 2: Resolve Application Executable Path
+        exe_path, desc = self.resolve_app(query)
 
-        if desc_or_signal == "DISAMBIGUATION_REQUIRED":
-            return {"status": "failed", "reason": "DISAMBIGUATION_REQUIRED", "candidates": resolved}
+        if not exe_path:
+            return {"status": "failed", "reason": f"I couldn't find an application named '{query}'."}
 
-        exe_or_uri = resolved
-        desc = desc_or_signal
-
-        # Step 1: Check if already running -> Bring to Foreground
-        if not exe_or_uri.startswith("ms-"):
-            if bring_window_to_foreground(exe_or_uri):
-                self._log_debug("Match found", f"Application '{query}' is already running. Brought window to foreground.")
-                self._log_debug("Success", f"Window foregrounded for {exe_or_uri}")
+        # Step 3: Check if resolved exe is running -> Bring window to front
+        if not exe_path.startswith("ms-"):
+            if bring_window_to_foreground(exe_path):
                 return {
                     "status": "success",
-                    "details": f"Application '{desc}' is already running. Brought window to foreground.",
+                    "details": f"Opened {query.title()}.",
                     "action": "open_app"
                 }
 
-        # Step 2: Launch Process
-        self._log_debug("Launching", f"Starting '{exe_or_uri}'...")
-
+        # Step 4: Launch Process
+        self._log_debug("Launching", f"Starting '{exe_path}'...")
         try:
-            if exe_or_uri.startswith("ms-"):
-                os.startfile(exe_or_uri)
-            elif os.path.exists(exe_or_uri):
-                os.startfile(exe_or_uri)
+            if exe_path.startswith("ms-"):
+                os.startfile(exe_path)
+            elif os.path.exists(exe_path):
+                os.startfile(exe_path)
             else:
-                subprocess.Popen(f'"{exe_or_uri}"', shell=True)
+                subprocess.Popen(f'"{exe_path}"', shell=True)
 
-            # Step 3: Verify Process Launch Telemetry (Poll for up to 3 seconds)
-            verified = False
-            start_poll = time.time()
-            p_clean = os.path.basename(exe_or_uri).lower().replace(".exe", "")
+            # Briefly poll (up to 1.5s) to bring new window to top
+            time.sleep(0.8)
+            bring_window_to_foreground(exe_path)
 
-            while time.time() - start_poll < 3.0:
-                time.sleep(0.3)
-                if exe_or_uri.startswith("ms-"):
-                    verified = True
-                    break
-
-                for proc in psutil.process_iter(['name', 'exe']):
-                    try:
-                        p_name = (proc.info['name'] or "").lower().replace(".exe", "")
-                        if p_clean in p_name:
-                            verified = True
-                            break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-
-                if verified:
-                    break
-
-            if verified:
-                self._log_debug("Success", f"Application '{exe_or_uri}' verified running.")
-                return {
-                    "status": "success",
-                    "details": f"Successfully launched {desc}",
-                    "action": "open_app"
-                }
-            else:
-                # If process wasn't detected immediately but launch command succeeded without error
-                self._log_debug("Success", f"Initiated launch process for {desc}")
-                return {
-                    "status": "success",
-                    "details": f"Initiated launch process for {desc}",
-                    "action": "open_app"
-                }
+            return {
+                "status": "success",
+                "details": f"Opened {query.title()}.",
+                "action": "open_app"
+            }
 
         except Exception as ex:
-            err_msg = f"Failed to launch application '{exe_or_uri}': {ex}"
             log_exception(ex, context="APP_LAUNCH_FAILED")
-            return {"status": "failed", "reason": err_msg}
+            return {"status": "failed", "reason": f"I couldn't launch '{query}'."}
 
 
 # Global Singleton Application Discovery Service
@@ -574,9 +523,9 @@ app_discovery_service = ApplicationDiscoveryService()
 
 # Legacy helper functions for backwards compatibility with existing handlers
 def find_all_matching_apps(app_name: str) -> List[Tuple[str, str]]:
-    return app_discovery_service.search_all_tiers(app_name)
+    return [(path, desc) for path, desc, _ in app_discovery_service.search_all_tiers(app_name)]
 
-def find_app_path(app_name: str) -> Tuple[Union[str, List[Tuple[str, str]], None], str]:
+def find_app_path(app_name: str) -> Tuple[Optional[str], str]:
     return app_discovery_service.resolve_app(app_name)
 
 def find_desktop_item(query: str) -> List[Tuple[str, str]]:
