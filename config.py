@@ -99,6 +99,7 @@ EDGE_TTS_RATE = "+25%"              # Edge TTS rate parameter (+25% faster)
 PYTTSX3_WPM = 220                   # pyttsx3 fallback WPM (220 WPM)
 VOICE_VOLUME = 1.0                  # Volume scale (0.0 - 1.0)
 VOICE_PITCH = "+0Hz"                # Pitch adjustment
-EXPRESSIVENESS = "natural"           # Natural expressiveness mode
-SILENT_ROUTINE_ACTIONS = True       # Skip speech for routine actions (copy, paste, min, max, etc.)
+# ── WhatsApp & Automation Settings ──
+WHATSAPP_AUTO_SEND = True          # Send WhatsApp messages immediately without confirmation (default ON)
+
 

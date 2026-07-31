@@ -130,7 +130,15 @@ class WindowsAutomationEngine:
                 recipient = action_data.get("recipient") or action_data.get("to") or "contact"
                 text = action_data.get("message") or action_data.get("text") or ""
                 app = action_data.get("app", "messaging app")
-                return True, f"Send message '{text}' to '{recipient}' on {app}"
+                
+                auto_send = getattr(config, "WHATSAPP_AUTO_SEND", True)
+                has_attachment = bool(action_data.get("attachment") or action_data.get("file"))
+                explicit_confirm = bool(action_data.get("require_confirmation", False))
+                multiple_contacts = bool(action_data.get("multiple_contacts", False))
+
+                if not auto_send or len(text) > 1000 or has_attachment or explicit_confirm or multiple_contacts:
+                    return True, f"Send message '{text}' to '{recipient}' on {app}"
+                return False, ""
             return True, f"Execute high-risk action: {action}"
         return False, ""
 

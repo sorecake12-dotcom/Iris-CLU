@@ -101,20 +101,28 @@ def open_messaging_app(app_name: str) -> str:
     raise ValueError(f"Could not locate application '{app_name}'.")
 
 
-def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool = False) -> dict:
+def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool = True) -> dict:
     """
-    Search WhatsApp contact, type requested message, require user confirmation, and execute send.
-    Returns status dict: {"status": "success"|"failed", "details": str, "verified": bool, "action": "send_message"}
+    Search WhatsApp contact, type requested message, and execute send.
+    Returns status dict with clean natural messages.
     """
     debug_log(f"Automating WhatsApp message to '{recipient}': '{message_text}' (send_now={send_now})", category="WHATSAPP")
-    open_messaging_app("whatsapp")
-    time.sleep(1.5)
-    bring_whatsapp_to_foreground()
+    try:
+        open_messaging_app("whatsapp")
+        time.sleep(1.2)
+        bring_whatsapp_to_foreground()
+    except Exception as ex:
+        return {
+            "status": "failed",
+            "reason": f"I couldn't open WhatsApp application.",
+            "verified": False,
+            "action": "send_message"
+        }
 
     if not HAS_PYAUTOGUI:
         return {
             "status": "failed",
-            "reason": "PyAutoGUI automation module is not installed.",
+            "reason": "I couldn't send the message (automation engine missing).",
             "verified": False,
             "action": "send_message"
         }
@@ -122,32 +130,32 @@ def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool 
     try:
         # Step 1: Focus search bar (Ctrl+F in WhatsApp Desktop)
         pyautogui.hotkey('ctrl', 'f')
-        time.sleep(0.4)
-        pyautogui.typewrite(recipient, interval=0.03)
-        time.sleep(0.8)
+        time.sleep(0.3)
+        pyautogui.typewrite(recipient, interval=0.02)
+        time.sleep(0.6)
         pyautogui.press('down')
         pyautogui.press('enter')
-        time.sleep(0.6)
+        time.sleep(0.5)
 
-        # Step 2: Type message text into input box
+        # Step 2: Type message text into chat input box
         if message_text:
-            pyautogui.typewrite(message_text, interval=0.02)
-            time.sleep(0.3)
+            pyautogui.typewrite(message_text, interval=0.015)
+            time.sleep(0.2)
 
-        # Step 3: Send message if confirmed by user
+        # Step 3: Send message automatically
         if send_now:
             pyautogui.press('enter')
-            time.sleep(0.5)
+            time.sleep(0.4)
             return {
                 "status": "success",
-                "details": f"Message successfully sent to {recipient}: \"{message_text}\"",
+                "details": f"✓ Message sent.",
                 "verified": True,
                 "action": "send_message"
             }
         else:
             return {
                 "status": "drafted",
-                "details": f"Drafted message for {recipient}: \"{message_text}\". Ready to send?",
+                "details": f"Drafted message for {recipient}.",
                 "verified": True,
                 "action": "send_message"
             }
@@ -156,12 +164,12 @@ def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool 
         log_exception(e, context="WHATSAPP_AUTOMATION_FAILED")
         return {
             "status": "failed",
-            "reason": f"Could not automate WhatsApp chat: {e}",
+            "reason": f"I couldn't send the message.",
             "verified": False,
             "action": "send_message"
         }
 
 
 def send_whatsapp_message(recipient: str, message_text: str) -> dict:
-    """Directly send the WhatsApp message after user confirmation."""
+    """Directly send the WhatsApp message."""
     return automate_whatsapp_message(recipient, message_text, send_now=True)

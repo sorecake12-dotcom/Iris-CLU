@@ -49,22 +49,25 @@ class CommandProcessor:
             action_data = self.pending_action
             if any(w in cmd_lower for w in ["yes", "yep", "yeah", "send it", "send", "do it", "go ahead", "sure", "ok", "okay", "confirm"]) or cmd_lower in ["y", "yes"]:
                 self.pending_action = None
-                exec_result = automation_engine.execute_action(action_data, confirmed=True)
-                
+                act_name = action_data.get("action", "")
                 t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
                 accent = t["accent"]
-                
-                act_name = action_data.get("action", "")
+
                 if act_name == "send_message":
                     recip = action_data.get("recipient") or action_data.get("to") or "contact"
-                    reply_msg = f"Done! Your message has been sent to {recip}."
+                    console.print(f"[{accent}]Sending to {recip}...[/{accent}]")
+
+                exec_result = automation_engine.execute_action(action_data, confirmed=True)
+                
+                if act_name == "send_message":
+                    reply_msg = "✓ Message sent."
+                    voice_msg = "Message sent."
                 else:
                     reply_msg = f"Done! {exec_result.get('details', 'Action completed.')}"
+                    voice_msg = "Done."
 
-                console.print(f"[{accent}]IRIS AI >[/{accent}]")
-                console.print(reply_msg)
-                console.print()
-                voice_engine.speak(reply_msg)
+                console.print(f"[{accent}]IRIS AI >[/{accent}] {reply_msg}\n")
+                voice_engine.speak(voice_msg)
                 return True
 
             elif any(w in cmd_lower for w in ["no", "nope", "cancel", "don't send", "dont send", "stop", "abort"]) or cmd_lower in ["n", "no"]:
@@ -73,11 +76,9 @@ class CommandProcessor:
                 accent = t["accent"]
                 
                 act_name = action_data.get("action", "")
-                cancel_msg = "Okay, I won't send it." if act_name == "send_message" else "Okay, action cancelled as requested."
+                cancel_msg = "Message cancelled." if act_name == "send_message" else "Action cancelled."
                 
-                console.print(f"[{accent}]IRIS AI >[/{accent}]")
-                console.print(cancel_msg)
-                console.print()
+                console.print(f"[{accent}]IRIS AI >[/{accent}] {cancel_msg}\n")
                 voice_engine.speak(cancel_msg)
                 return True
 
@@ -206,6 +207,27 @@ class CommandProcessor:
 
         elif cmd_lower in ["/tile", "tile windows", "tile all windows"]:
             return self.cmd_tile()
+
+        elif any(cmd_lower == phrase for phrase in [
+            "enable whatsapp auto send", "whatsapp auto send on", "enable whatsapp auto-send", "whatsapp auto-send on"
+        ]):
+            config.WHATSAPP_AUTO_SEND = True
+            console.print("\n[bold green]✓ WhatsApp Auto Send ENABLED[/bold green]\n")
+            voice_engine.speak("WhatsApp auto send enabled.")
+            return True
+
+        elif any(cmd_lower == phrase for phrase in [
+            "disable whatsapp auto send", "whatsapp auto send off", "disable whatsapp auto-send", "whatsapp auto-send off"
+        ]):
+            config.WHATSAPP_AUTO_SEND = False
+            console.print("\n[bold yellow]✓ WhatsApp Auto Send DISABLED (Safe Mode Active)[/bold yellow]\n")
+            voice_engine.speak("WhatsApp auto send disabled.")
+            return True
+
+        elif any(cmd_lower == phrase for phrase in [
+            "show automation settings", "automation settings", "/settings", "show settings"
+        ]):
+            return self.cmd_automation_settings()
 
         elif cmd_lower.startswith("/"):
             ui.print_error(f"Unknown command '{user_input}'. Type [bold white]/help[/bold white] for command matrix.")
@@ -343,6 +365,27 @@ class CommandProcessor:
             f"* **Plugin Registry:** Modular extensibility enabled.\n"
         )
         console.print(Panel(info_text, border_style=t["border"], title=f"[{t['accent']}][AUTOMATION TELEMETRY][/{t['accent']}]"))
+        return True
+
+    def cmd_automation_settings(self):
+        ws_status = "ENABLED (Immediate Send)" if getattr(config, "WHATSAPP_AUTO_SEND", True) else "DISABLED (Safe Mode - Confirms Every Message)"
+        voice_status = "ENABLED" if getattr(config, "VOICE_ENABLED", True) else "DISABLED"
+        rate_str = f"{getattr(config, 'SPEECH_RATE', 1.25)}x"
+        short_resp = "ENABLED (Ultra-concise)" if getattr(config, "SPEAK_SHORT_RESPONSES_ONLY", True) else "DISABLED"
+
+        info = (
+            f"### :: IRIS AUTOMATION & MESSAGING SETTINGS ::\n\n"
+            f"* **WhatsApp Auto Send:** `{ws_status}`\n"
+            f"* **Voice Response:** `{voice_status}`\n"
+            f"* **Speech Speed Rate:** `{rate_str}`\n"
+            f"* **Concise Spoken Replies:** `{short_resp}`\n"
+            f"* **High-Risk Safeguards:** `Active (File Deletion, Shell Commands, System Power)`\n\n"
+            f"[dim]Commands to adjust settings:\n"
+            f"  • enable whatsapp auto send / disable whatsapp auto send\n"
+            f"  • /voice rate 1.25 / /voice toggle / /voice short on[/dim]"
+        )
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        console.print(Panel(info, border_style=t["border"], title=f"[{t['accent']}][AUTOMATION SETTINGS][/{t['accent']}]"))
         return True
 
     def _handle_media_control_fastpath(self, cmd_lower: str) -> bool:
@@ -785,12 +828,20 @@ class CommandProcessor:
 
             if high_risk:
                 self.pending_action = action_intent
-                # Draft message in WhatsApp if sending a message
                 if action_intent.get("action") == "send_message":
+                    recip = action_intent.get("recipient") or action_intent.get("to") or "contact"
+                    t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                    console.print(f"[{t['accent']}]IRIS AI > Send this message to {recip}?[/{t['accent']}]\n")
+                    voice_engine.speak(f"Send this message to {recip}?")
                     automation_engine.execute_action(action_intent, confirmed=False)
                 return
 
-            # Execute non-high-risk action immediately
+            # Execute action immediately when Auto Send is ON
+            if action_intent.get("action") == "send_message":
+                recip = action_intent.get("recipient") or action_intent.get("to") or "contact"
+                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                console.print(f"[{t['accent']}]Sending to {recip}...[/{t['accent']}]")
+
             exec_result = automation_engine.execute_action(action_intent, confirmed=True)
 
             # Handle Candidate Disambiguation Prompt if multiple app matches found
