@@ -939,6 +939,59 @@ class CommandProcessor:
         Fast-path NLP handler for very obvious intents that don't need LLM.
         Returns True if handled, False to let normal LLM routing continue.
         """
+        # WhatsApp Calling & Messaging Intent Priority Fast-Path
+        if "whatsapp" in cmd_lower or any(w in cmd_lower for w in ["call ", "video call", "voice call", "ring "]):
+            # Priority 1: Video Call
+            if any(w in cmd_lower for w in ["video", "video call", "camera call", "facetime"]):
+                contact = cmd_lower
+                for prefix in ["open whatsapp and video call", "video call", "start a video call with", "start a video call", "on whatsapp", "whatsapp", "call"]:
+                    contact = contact.replace(prefix, "")
+                contact = contact.replace("and", "").replace("with", "").strip().title() or "contact"
+
+                if config.get_config("DEBUG_MODE", False):
+                    console.print("[bold cyan][INTENT] Detected Intent: video_call[/bold cyan]")
+
+                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                console.print(f"[{t['accent']}]IRIS AI > Starting a video call with {contact}...[/{t['accent']}]")
+                voice_engine.speak(f"Video calling {contact}.")
+
+                res = automation_engine.execute_action({
+                    "action": "whatsapp_call",
+                    "recipient": contact,
+                    "call_type": "video"
+                }, confirmed=True)
+
+                if res.get("status") == "success":
+                    console.print(f"[{t['accent']}]✓ Video call started.[/{t['accent']}]\n")
+                else:
+                    console.print(f"[bold red]❌ {res.get('reason', 'I couldn\'t start the WhatsApp call.')}[/bold red]\n")
+                return True
+
+            # Priority 2: Voice Call
+            elif any(w in cmd_lower for w in ["call", "voice call", "ring", "phone"]):
+                contact = cmd_lower
+                for prefix in ["open whatsapp and call", "whatsapp call", "voice call", "call", "ring", "phone", "on whatsapp", "whatsapp"]:
+                    contact = contact.replace(prefix, "")
+                contact = contact.replace("and", "").replace("with", "").strip().title() or "contact"
+
+                if config.get_config("DEBUG_MODE", False):
+                    console.print("[bold cyan][INTENT] Detected Intent: voice_call[/bold cyan]")
+
+                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+                console.print(f"[{t['accent']}]IRIS AI > Calling {contact}...[/{t['accent']}]")
+                voice_engine.speak(f"Calling {contact}.")
+
+                res = automation_engine.execute_action({
+                    "action": "whatsapp_call",
+                    "recipient": contact,
+                    "call_type": "voice"
+                }, confirmed=True)
+
+                if res.get("status") == "success":
+                    console.print(f"[{t['accent']}]✓ Voice call started.[/{t['accent']}]\n")
+                else:
+                    console.print(f"[bold red]❌ {res.get('reason', 'I couldn\'t start the WhatsApp call.')}[/bold red]\n")
+                return True
         # Clipboard quick reads
         if cmd_lower in ["what's on my clipboard", "read clipboard", "show clipboard", "clipboard"]:
             from clipboard_engine import clipboard_engine
