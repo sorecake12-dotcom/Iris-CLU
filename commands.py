@@ -527,68 +527,87 @@ class CommandProcessor:
         return False
 
     def cmd_voice(self, command_str: str = ""):
-        parts = command_str.split(maxsplit=2)
-        subcmd = parts[1].lower() if len(parts) > 1 else "status"
+        try:
+            parts = command_str.split(maxsplit=2)
+            subcmd = parts[1].lower() if len(parts) > 1 else "status"
 
-        if subcmd in ["on", "enable"]:
-            config.VOICE_ENABLED = True
-            console.print("\n[bold green]✓ Voice response ENABLED[/bold green]\n")
-            voice_engine.speak("Voice enabled.")
-            return True
-        elif subcmd in ["off", "disable"]:
-            config.VOICE_ENABLED = False
-            voice_engine.stop_speech()
-            console.print("\n[bold yellow]✓ Voice response DISABLED[/bold yellow]\n")
-            return True
-        elif subcmd in ["toggle"]:
-            config.VOICE_ENABLED = not config.VOICE_ENABLED
-            state = "ENABLED" if config.VOICE_ENABLED else "DISABLED"
-            console.print(f"\n[bold green]✓ Voice response {state}[/bold green]\n")
-            if config.VOICE_ENABLED:
+            if subcmd in ["on", "enable"]:
+                config.set_config("VOICE_ENABLED", True)
+                console.print("\n[bold green]✓ Voice response ENABLED[/bold green]\n")
                 voice_engine.speak("Voice enabled.")
+                return True
+            elif subcmd in ["off", "disable"]:
+                config.set_config("VOICE_ENABLED", False)
+                voice_engine.stop_speech()
+                console.print("\n[bold yellow]✓ Voice response DISABLED[/bold yellow]\n")
+                return True
+            elif subcmd in ["toggle"]:
+                cur = config.get_config("VOICE_ENABLED", True)
+                config.set_config("VOICE_ENABLED", not cur)
+                state = "ENABLED" if not cur else "DISABLED"
+                console.print(f"\n[bold green]✓ Voice response {state}[/bold green]\n")
+                if not cur:
+                    voice_engine.speak("Voice enabled.")
+                return True
+            elif subcmd in ["rate", "speed"]:
+                if len(parts) > 2:
+                    try:
+                        r = float(parts[2])
+                        config.set_config("VOICE_RATE", r)
+                        config.set_config("SPEECH_RATE", r)
+                        pct = int((r - 1.0) * 100)
+                        config.set_config("EDGE_TTS_RATE", f"+{pct}%" if pct >= 0 else f"{pct}%")
+                        config.set_config("PYTTSX3_WPM", int(175 * r))
+                        console.print(f"\n[bold green]✓ Speech rate set to {r:.2f}x ({config.get_config('EDGE_TTS_RATE')})[/bold green]\n")
+                        voice_engine.speak(f"Speech rate updated to {r:.2f}x.")
+                        return True
+                    except ValueError:
+                        pass
+                console.print(f"\n[dim cyan]Current Speech Rate: {config.get_config('VOICE_RATE', 1.20):.2f}x ({config.get_config('EDGE_TTS_RATE', '+20%')})[/dim cyan]")
+                console.print("[dim]Usage: /voice rate 1.20  (set 1.20x speed)[/dim]\n")
+                return True
+            elif subcmd in ["short"]:
+                if len(parts) > 2:
+                    val = parts[2].lower()
+                    setting = val in ["on", "true", "yes", "1"]
+                else:
+                    setting = not config.get_config("SHORT_REPLY_MODE", True)
+                config.set_config("SHORT_REPLY_MODE", setting)
+                config.set_config("SPEAK_SHORT_RESPONSES_ONLY", setting)
+                st = "ENABLED" if setting else "DISABLED"
+                console.print(f"\n[bold green]✓ Short Reply Mode {st}[/bold green]\n")
+                return True
+
+            voice_engine.scan_and_load_voice(verbose=False)
+            voice_engine_mode = "Cloned Voice" if getattr(voice_engine, "cloning_active", False) else config.get_config("VOICE_MODE", "Neural Voice")
+
+            v_rate = f"{float(config.get_config('VOICE_RATE', 1.20)):.2f}x"
+            v_pitch = f"{float(config.get_config('VOICE_PITCH', 1.00)):.2f}" if str(config.get_config('VOICE_PITCH', '1.00')).replace('.', '', 1).isdigit() else str(config.get_config('VOICE_PITCH', '+0Hz'))
+            v_vol = f"{int(float(config.get_config('VOICE_VOLUME', 1.00)) * 100)}%"
+            v_expr = str(config.get_config("EXPRESSIVENESS", "Balanced")).capitalize()
+            v_short = "ON" if config.get_config("SHORT_REPLY_MODE", True) else "OFF"
+            v_auto = "ON" if config.get_config("AUTO_SPEAK", True) else "OFF"
+
+            voice_info = (
+                f"### :: VOICE SETTINGS ::\n\n"
+                f"* **Voice Engine:** `{voice_engine_mode}`\n"
+                f"* **Speech Rate:** `{v_rate}`\n"
+                f"* **Pitch:** `{v_pitch}`\n"
+                f"* **Volume:** `{v_vol}`\n"
+                f"* **Expressiveness:** `{v_expr}`\n"
+                f"* **Short Reply Mode:** `{v_short}`\n"
+                f"* **Auto Speak:** `{v_auto}`\n"
+                f"* **Status:** `Ready`\n"
+            )
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(Panel(voice_info, border_style=t["border"], title=f"[{t['accent']}][VOICE CONFIGURATION][/{t['accent']}]"))
             return True
-        elif subcmd in ["rate", "speed"]:
-            if len(parts) > 2:
-                try:
-                    r = float(parts[2])
-                    config.SPEECH_RATE = r
-                    pct = int((r - 1.0) * 100)
-                    config.EDGE_TTS_RATE = f"+{pct}%" if pct >= 0 else f"{pct}%"
-                    config.PYTTSX3_WPM = int(175 * r)
-                    console.print(f"\n[bold green]✓ Speech rate set to {r}x ({config.EDGE_TTS_RATE})[/bold green]\n")
-                    voice_engine.speak(f"Speech rate updated to {r}x.")
-                    return True
-                except ValueError:
-                    pass
-            console.print(f"\n[dim cyan]Current Speech Rate: {config.SPEECH_RATE}x ({config.EDGE_TTS_RATE})[/dim cyan]")
-            console.print("[dim]Usage: /voice rate 1.25  (set 1.25x speed)[/dim]\n")
-            return True
-        elif subcmd in ["short"]:
-            if len(parts) > 2:
-                val = parts[2].lower()
-                config.SPEAK_SHORT_RESPONSES_ONLY = val in ["on", "true", "yes", "1"]
+        except Exception as ex:
+            if getattr(config, "DEBUG_MODE", False):
+                console.print(f"[bold red]Voice settings error: {ex}[/bold red]")
             else:
-                config.SPEAK_SHORT_RESPONSES_ONLY = not config.SPEAK_SHORT_RESPONSES_ONLY
-            st = "ENABLED" if config.SPEAK_SHORT_RESPONSES_ONLY else "DISABLED"
-            console.print(f"\n[bold green]✓ Ultra-short responses mode {st}[/bold green]\n")
+                console.print("[bold yellow]Voice settings updated with defaults.[/bold yellow]")
             return True
-
-        voice_engine.scan_and_load_voice(verbose=False)
-        status_str = "CLONED VOICE ACTIVE" if voice_engine.cloning_active else "STANDARD TTS (Edge / SAPI5)"
-        ref_file = voice_engine.current_voice_file if voice_engine.current_voice_file else "None (Add sample to voice/)"
-
-        voice_info = (
-            f"### :: IRIS VOICE TELEMETRY & SETTINGS ::\n\n"
-            f"* **Voice Enabled:** `{'YES' if config.VOICE_ENABLED else 'NO'}`\n"
-            f"* **Speech Rate:** `{config.SPEECH_RATE}x` ({config.EDGE_TTS_RATE})\n"
-            f"* **Short Spoken Responses:** `{'ON (Concise)' if config.SPEAK_SHORT_RESPONSES_ONLY else 'OFF (Full)'}`\n"
-            f"* **Voice Volume:** `{int(config.VOICE_VOLUME * 100)}%`\n"
-            f"* **Expressiveness:** `{config.EXPRESSIVENESS.capitalize()}`\n"
-            f"* **Voice Mode:** `{status_str}`\n"
-            f"* **Reference Voice:** `{ref_file}`\n"
-        )
-        console.print(Panel(voice_info, border_style="cyan", title="[bold cyan][VOICE CONFIGURATION][/bold cyan]"))
-        return True
 
     def cmd_status(self):
         banner.render_scifi_status_hud(state="IDLE", theme_key=self.cli.current_theme)
