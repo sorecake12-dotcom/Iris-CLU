@@ -147,8 +147,44 @@ class CommandProcessor:
         elif cmd_lower in ["/clearmemory", "clear memory", "forget everything", "wipe memory"]:
             return self.cmd_clearmemory()
 
-        # ── Wake word toggle ────────────────────────────────────
-        elif cmd_lower in ["/listen", "start listening", "wake word"]:
+        # ── Real-Time Voice Mode & Mic Controls ──────────────────────
+        elif any(cmd_lower == phrase for phrase in [
+            "stop listening", "disable mic", "turn off mic", "disable microphone"
+        ]):
+            from wake_word import wake_word_listener
+            wake_word_listener.mic_enabled = False
+            console.print("\n[bold yellow]🎤 Microphone Disabled.[/bold yellow]\n")
+            voice_engine.speak("Microphone disabled.")
+            return True
+
+        elif any(cmd_lower == phrase for phrase in [
+            "start listening", "enable mic", "turn on mic", "enable microphone"
+        ]):
+            from wake_word import wake_word_listener
+            wake_word_listener.mic_enabled = True
+            console.print("\n[bold green]🎤 Microphone Enabled.[/bold green]\n")
+            voice_engine.speak("Microphone enabled.")
+            return True
+
+        elif any(cmd_lower == phrase for phrase in [
+            "sleep", "go to sleep"
+        ]):
+            from wake_word import wake_word_listener
+            wake_word_listener.is_sleeping = True
+            console.print("\n[bold yellow]🎤 IRIS is sleeping. Say 'Wake up' or press Ctrl+Space to activate.[/bold yellow]\n")
+            voice_engine.speak("Sleeping.")
+            return True
+
+        elif any(cmd_lower == phrase for phrase in [
+            "wake up", "wake up iris"
+        ]):
+            from wake_word import wake_word_listener
+            wake_word_listener.is_sleeping = False
+            console.print("\n[bold green]🎤 IRIS is awake and listening.[/bold green]\n")
+            voice_engine.speak("I'm awake Boss.")
+            return True
+
+        elif cmd_lower in ["/listen", "wake word"]:
             return self.cmd_listen()
 
         # ── API Configuration commands ──────────────────────────
@@ -350,6 +386,18 @@ class CommandProcessor:
             voice_engine.speak(msg)
         else:
             ui.print_error(msg)
+        return True
+
+    def cmd_listen(self):
+        """Trigger manual one-shot speech recognition capture."""
+        from wake_word import wake_word_listener
+        if not wake_word_listener.is_listening:
+            wake_word_listener.start()
+
+        spoken_cmd = wake_word_listener.capture_one_command()
+        if spoken_cmd:
+            console.print(f"\n[bold bright_cyan]🎤 Boss said:[/bold bright_cyan] {spoken_cmd}\n")
+            return self.process(spoken_cmd)
         return True
 
     def cmd_automation(self):

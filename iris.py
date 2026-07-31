@@ -173,7 +173,7 @@ def main():
     )
     parser.add_argument("--no-boot",  action="store_true", help="Skip startup sequence")
     parser.add_argument("--debug","-d", action="store_true", help="Enable developer debug mode")
-    parser.add_argument("--listen",  action="store_true", help="Enable wake-word listening mode ('Hey IRIS')")
+    parser.add_argument("--listen", action="store_true", default=True, help="Enable wake-word listening mode ('Hey IRIS')")
     parser.add_argument("--code",    action="store_true", help="Boot directly into Coding Mode (Gemini)")
 
     args = parser.parse_args()
