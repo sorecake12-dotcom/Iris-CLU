@@ -441,7 +441,12 @@ class WindowsAutomationEngine:
     # 2. Spotify Automation
     def _handle_play_spotify(self, data: dict) -> str:
         query = data.get("query") or data.get("target") or data.get("song") or ""
-        return play_spotify(query)
+        res = play_spotify(query)
+        if isinstance(res, dict):
+            if res.get("status") == "failed":
+                raise ValueError(res.get("reason", "Could not start playback on Spotify."))
+            return res.get("details", f"Playing '{query}'.")
+        return str(res)
 
     # 3. Messaging Automation (WhatsApp, Telegram, Discord, Teams)
     def _handle_send_message(self, data: dict) -> str:
