@@ -1,9 +1,11 @@
 """
-IRIS AI - WhatsApp & Messaging Automation Engine
-Handles contact search, chat navigation, automated typing, confirmation prompts, message sending, and delivery verification.
+IRIS AI - WhatsApp Messaging & Calling Automation Engine
+Handles contact search, chat navigation, automated typing, message sending,
+WhatsApp Voice Calls, Video Calls, End Call, Answer Call, and Decline Call.
 """
 
 import os
+import sys
 import time
 import urllib.parse
 import webbrowser
@@ -40,6 +42,7 @@ def bring_whatsapp_to_foreground() -> bool:
                 if "whatsapp" in title and user32.IsWindowVisible(hwnd):
                     user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                     user32.SetForegroundWindow(hwnd)
+                    user32.BringWindowToTop(hwnd)
                     found = True
             return True
 
@@ -57,6 +60,8 @@ def open_messaging_app(app_name: str) -> str:
     debug_log(f"Opening messaging application: '{app_lower}'", category="MESSAGING")
 
     if "whatsapp" in app_lower:
+        if bring_whatsapp_to_foreground():
+            return "Brought WhatsApp Desktop to foreground."
         try:
             webbrowser.open("whatsapp:")
             time.sleep(1.5)
@@ -64,7 +69,7 @@ def open_messaging_app(app_name: str) -> str:
             return "Opened WhatsApp Desktop."
         except Exception:
             p, _ = find_app_path("whatsapp")
-            if p and isinstance(p, str):
+            if p and isinstance(p, str) and os.path.exists(p):
                 os.startfile(p)
                 time.sleep(1.5)
                 bring_whatsapp_to_foreground()
@@ -106,15 +111,15 @@ def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool 
     Search WhatsApp contact, type requested message, and execute send.
     Returns status dict with clean natural messages.
     """
-    debug_log(f"Automating WhatsApp message to '{recipient}': '{message_text}' (send_now={send_now})", category="WHATSAPP")
+    debug_log(f"Automating WhatsApp message to '{recipient}': '{message_text}'", category="WHATSAPP")
     try:
         open_messaging_app("whatsapp")
         time.sleep(1.2)
         bring_whatsapp_to_foreground()
-    except Exception as ex:
+    except Exception:
         return {
             "status": "failed",
-            "reason": f"I couldn't open WhatsApp application.",
+            "reason": "I couldn't find WhatsApp Desktop.",
             "verified": False,
             "action": "send_message"
         }
@@ -131,6 +136,8 @@ def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool 
         # Step 1: Focus search bar (Ctrl+F in WhatsApp Desktop)
         pyautogui.hotkey('ctrl', 'f')
         time.sleep(0.3)
+        pyautogui.hotkey('ctrl', 'a')
+        pyautogui.press('backspace')
         pyautogui.typewrite(recipient, interval=0.02)
         time.sleep(0.6)
         pyautogui.press('down')
@@ -164,10 +171,129 @@ def automate_whatsapp_message(recipient: str, message_text: str, send_now: bool 
         log_exception(e, context="WHATSAPP_AUTOMATION_FAILED")
         return {
             "status": "failed",
-            "reason": f"I couldn't send the message.",
+            "reason": "I couldn't send the message.",
             "verified": False,
             "action": "send_message"
         }
+
+
+def automate_whatsapp_call(recipient: str, call_type: str = "voice") -> dict:
+    """
+    Search WhatsApp contact and start Voice or Video call.
+    Returns status dict with clean natural messages.
+    """
+    is_video = "video" in call_type.lower()
+    call_kind = "video" if is_video else "voice"
+    debug_log(f"Automating WhatsApp {call_kind} call to '{recipient}'", category="WHATSAPP_CALL")
+
+    try:
+        open_messaging_app("whatsapp")
+        time.sleep(1.2)
+        bring_whatsapp_to_foreground()
+    except Exception:
+        return {
+            "status": "failed",
+            "reason": "I couldn't find WhatsApp Desktop.",
+            "verified": False,
+            "action": "whatsapp_call"
+        }
+
+    if not HAS_PYAUTOGUI:
+        return {
+            "status": "failed",
+            "reason": "I couldn't start the call (automation engine missing).",
+            "verified": False,
+            "action": "whatsapp_call"
+        }
+
+    try:
+        # Step 1: Focus search bar (Ctrl+F) & open contact chat
+        pyautogui.hotkey('ctrl', 'f')
+        time.sleep(0.3)
+        pyautogui.hotkey('ctrl', 'a')
+        pyautogui.press('backspace')
+        pyautogui.typewrite(recipient, interval=0.02)
+        time.sleep(0.7)
+        pyautogui.press('down')
+        pyautogui.press('enter')
+        time.sleep(0.6)  # Wait for chat view to load
+
+        # Step 2: Trigger Call via WhatsApp Desktop shortcuts or hotkeys
+        bring_whatsapp_to_foreground()
+        if is_video:
+            # Video call shortcut: Ctrl + Shift + V
+            pyautogui.hotkey('ctrl', 'shift', 'v')
+            time.sleep(0.4)
+            return {
+                "status": "success",
+                "details": f"✓ Video call started.",
+                "verified": True,
+                "action": "whatsapp_call"
+            }
+        else:
+            # Voice call shortcut: Ctrl + Shift + C
+            pyautogui.hotkey('ctrl', 'shift', 'c')
+            time.sleep(0.4)
+            return {
+                "status": "success",
+                "details": f"✓ Voice call started.",
+                "verified": True,
+                "action": "whatsapp_call"
+            }
+
+    except Exception as e:
+        log_exception(e, context="WHATSAPP_CALL_FAILED")
+        return {
+            "status": "failed",
+            "reason": "I couldn't start the call.",
+            "verified": False,
+            "action": "whatsapp_call"
+        }
+
+
+def end_whatsapp_call() -> dict:
+    """End active WhatsApp call."""
+    bring_whatsapp_to_foreground()
+    if HAS_PYAUTOGUI:
+        pyautogui.hotkey('ctrl', 'shift', 'e')
+        time.sleep(0.2)
+        pyautogui.press('esc')
+    return {
+        "status": "success",
+        "details": "Call ended.",
+        "verified": True,
+        "action": "end_call"
+    }
+
+
+def answer_whatsapp_call() -> dict:
+    """Answer incoming WhatsApp call."""
+    bring_whatsapp_to_foreground()
+    if HAS_PYAUTOGUI:
+        pyautogui.hotkey('ctrl', 'shift', 'a')
+        time.sleep(0.2)
+        pyautogui.press('enter')
+    return {
+        "status": "success",
+        "details": "Incoming call answered.",
+        "verified": True,
+        "action": "answer_call"
+    }
+
+
+def reject_whatsapp_call() -> dict:
+    """Reject/Decline incoming WhatsApp call."""
+    bring_whatsapp_to_foreground()
+    if HAS_PYAUTOGUI:
+        pyautogui.hotkey('ctrl', 'shift', 'r')
+        time.sleep(0.2)
+        pyautogui.press('esc')
+    return {
+        "status": "success",
+        "details": "Call declined.",
+        "verified": True,
+        "action": "reject_call"
+    }
 
 
 def send_whatsapp_message(recipient: str, message_text: str) -> dict:

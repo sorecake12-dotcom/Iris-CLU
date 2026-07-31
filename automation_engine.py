@@ -241,6 +241,13 @@ class WindowsAutomationEngine:
         r.register("next_song", self._handle_next_song)
         r.register("prev_song", self._handle_prev_song)
         r.register("send_message", self._handle_send_message)
+        r.register("whatsapp_call", self._handle_whatsapp_call)
+        r.register("end_call", self._handle_end_call)
+        r.register("hang_up", self._handle_end_call)
+        r.register("answer_call", self._handle_answer_call)
+        r.register("accept_call", self._handle_answer_call)
+        r.register("reject_call", self._handle_reject_call)
+        r.register("decline_call", self._handle_reject_call)
         r.register("press_hotkey", self._handle_press_hotkey)
         r.register("type_text", self._handle_type_text)
         r.register("open_explorer", self._handle_open_explorer)
@@ -795,6 +802,38 @@ class WindowsAutomationEngine:
         res = automate_whatsapp_message(recipient, text, send_now=data.get("send_now", False))
         if isinstance(res, dict):
             return res.get("details", f"Processed message for {recipient}.")
+        return str(res)
+
+    def _handle_whatsapp_call(self, data: dict) -> str:
+        recipient = data.get("recipient") or data.get("contact") or data.get("target") or "contact"
+        call_type = data.get("call_type") or data.get("type") or "voice"
+        from whatsapp_automation import automate_whatsapp_call
+        res = automate_whatsapp_call(recipient, call_type=call_type)
+        if isinstance(res, dict):
+            if res.get("status") == "failed":
+                raise ValueError(res.get("reason", "Could not start call."))
+            return res.get("details", f"Called {recipient}.")
+        return str(res)
+
+    def _handle_end_call(self, data: dict) -> str:
+        from whatsapp_automation import end_whatsapp_call
+        res = end_whatsapp_call()
+        if isinstance(res, dict):
+            return res.get("details", "Call ended.")
+        return str(res)
+
+    def _handle_answer_call(self, data: dict) -> str:
+        from whatsapp_automation import answer_whatsapp_call
+        res = answer_whatsapp_call()
+        if isinstance(res, dict):
+            return res.get("details", "Call answered.")
+        return str(res)
+
+    def _handle_reject_call(self, data: dict) -> str:
+        from whatsapp_automation import reject_whatsapp_call
+        res = reject_whatsapp_call()
+        if isinstance(res, dict):
+            return res.get("details", "Call declined.")
         return str(res)
 
     # 16. Task Scheduler & Timer Handlers

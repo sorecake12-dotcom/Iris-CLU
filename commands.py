@@ -184,6 +184,28 @@ class CommandProcessor:
             voice_engine.speak("I'm awake Boss.")
             return True
 
+        # ── WhatsApp Call Controls ──────────────────────────────────
+        elif cmd_lower in ["end call", "hang up", "disconnect call"]:
+            automation_engine.execute_action({"action": "end_call"}, confirmed=True)
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] Call ended.\n")
+            voice_engine.speak("Call ended.")
+            return True
+
+        elif cmd_lower in ["answer call", "accept call"]:
+            automation_engine.execute_action({"action": "answer_call"}, confirmed=True)
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] Incoming call answered.\n")
+            voice_engine.speak("Incoming call answered.")
+            return True
+
+        elif cmd_lower in ["reject call", "decline call"]:
+            automation_engine.execute_action({"action": "reject_call"}, confirmed=True)
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            console.print(f"[{t['accent']}]IRIS AI >[/{t['accent']}] Call declined.\n")
+            voice_engine.speak("Call declined.")
+            return True
+
         elif cmd_lower in ["/listen", "wake word"]:
             return self.cmd_listen()
 
