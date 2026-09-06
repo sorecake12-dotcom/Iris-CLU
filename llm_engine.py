@@ -17,7 +17,7 @@ load_dotenv()
 console = Console()
 
 class GroqLLMEngine:
-    def __init__(self, model_name="llama-3.3-70b-versatile"):
+    def __init__(self, model_name="groq/compound"):
         self.model_name = model_name
         self.api_key = get_groq_api_key()
         self.client = None
@@ -192,7 +192,7 @@ class GroqLLMEngine:
         if config.DEBUG_MODE:
             console.print("[bold cyan][LLM] Streaming response...[/bold cyan]")
 
-        fallback_models = [self.model_name, "llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"]
+        fallback_models = [self.model_name, "groq/compound", "qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it", "mixtral-8x7b-32768"]
         # Remove duplicates while maintaining order
         fallback_models = list(dict.fromkeys(fallback_models))
 
@@ -211,8 +211,9 @@ class GroqLLMEngine:
                         yield chunk.choices[0].delta.content
                 return
             except Exception as e:
-                if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
-                    debug_log(f"Rate limit on model {model}, trying fallback...", category="LLM")
+                err_lower = str(e).lower()
+                if any(k in err_lower for k in ["rate_limit_exceeded", "429", "404", "model_not_found", "does not exist"]):
+                    debug_log(f"Model {model} failed ({e}), trying fallback...", category="LLM")
                     continue
                 else:
                     error_str = f"Groq API Error: {str(e)}"
