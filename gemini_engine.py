@@ -156,6 +156,48 @@ class GeminiCodingEngine:
             log_exception(ex, context="GEMINI_STREAM")
             yield f"\n[Gemini Error: {ex}]\n"
 
+    def summarize_realtime_info(self, query: str, search_context: str) -> str:
+        """
+        Summarize real-time web search results using Gemini.
+        Returns a concise string with bullet points and source names.
+        """
+        if not self.is_ready():
+            return ""
+
+        prompt = (
+            f"You are IRIS AI — a highly intelligent and helpful AI assistant.\n"
+            f"The user asked: '{query}'\n\n"
+            f"Below is FRESH, REAL-TIME search data retrieved live from the web:\n"
+            f"======================\n"
+            f"{search_context}\n"
+            f"======================\n\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Answer the user's question directly and concisely based strictly on the provided search data.\n"
+            f"2. For news/updates/lists, provide 3 to 5 clear bullet points with key facts.\n"
+            f"3. Include source names in parentheses at the end or per point (e.g., '(Source: Reuters, Google News)').\n"
+            f"4. Keep the answer concise and well-structured unless extra detail was specifically requested.\n"
+            f"5. NEVER invent, hallucinate, or assume current events outside the provided search data.\n"
+        )
+
+        try:
+            import google.generativeai as genai
+            model = genai.GenerativeModel(self.MODEL_PRIMARY)
+            response = model.generate_content(prompt)
+            if response and response.text:
+                return response.text.strip()
+        except Exception as ex:
+            debug_log(f"Gemini realtime summarization error: {ex}", category="GEMINI")
+            try:
+                import google.generativeai as genai
+                fallback = genai.GenerativeModel(self.MODEL_FALLBACK)
+                response = fallback.generate_content(prompt)
+                if response and response.text:
+                    return response.text.strip()
+            except Exception:
+                pass
+        return ""
+
+
 
 # ── Global Singleton ──────────────────────────────────────────────
 gemini_engine = GeminiCodingEngine()

@@ -165,11 +165,12 @@ class VoiceEngine:
                     console.print("[dim green][TTS] Ready[/dim green]")
                 return False
 
-    def prepare_speech_text(self, text: str) -> str:
+    def prepare_speech_text(self, text: str, force_full: bool = False) -> str:
         """
-        Sanitizes and extracts a short, natural, human-like speech version for TTS:
+        Sanitizes and prepares natural text for speech synthesis:
         - Removes code blocks, URLs, file paths, JSON data, debug info, robotic preamble phrases.
-        - Truncates long text to concise 1-2 sentence spoken summaries (~15-20 words max).
+        - If force_full=True or SHORT_REPLY_MODE is OFF, speaks full text (up to 250 words).
+        - Otherwise, speaks concise 2-3 sentences (up to 50 words).
         """
         if not text or not getattr(config, "VOICE_ENABLED", True):
             return ""
@@ -177,7 +178,7 @@ class VoiceEngine:
         # 1. Strip raw code blocks — do NOT read code aloud
         if "```" in text:
             text = re.sub(r"```[\s\S]*?```", " Code generated on screen. ", text)
-        
+
         # 2. Strip inline code, URLs, file paths, JSON
         text = re.sub(r"`[^`]*`", "", text)
         text = re.sub(r"https?://\S+", "", text)
@@ -186,11 +187,13 @@ class VoiceEngine:
         text = re.sub(r"\{\s*\"action\"\s*:\s*\"[^\"]+\"[\s\S]*?\}", "", text)
         text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         text = re.sub(r"^[#\-\*\+]+\s*", "", text, flags=re.MULTILINE)
-        text = re.sub(r"[#*_\-+=~|\\\[\]]", " ", text)
+        text = re.sub(r"[#*_\-+=~|\\\[\]•✦]", " ", text)
         text = re.sub(r"\[::\]|\[\+\]|\[VOICE\]|\[LLM\]|\[TTS\]|\[AUDIO\]|❖", "", text)
 
         # 3. Strip robotic preamble filler phrases
         robotic_phrases = [
+            r"Here is the result of your request\s*:?",
+            r"As an AI assistant\s*,?",
             r"I'll now search for\s*",
             r"I will now search for\s*",
             r"I'll search for\s*",
@@ -216,29 +219,28 @@ class VoiceEngine:
         if re.match(r"^[\d\.\,\s\+\-\*\/\=]+$", text):
             return text
 
-        # 4. Short responses mode (default ON) — pick 1 concise sentence or max 20 words
-        if getattr(config, "SPEAK_SHORT_RESPONSES_ONLY", True):
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-            spoken_text = sentences[0] if sentences else text
-            words = spoken_text.split()
-            if len(words) > 20:
-                spoken_text = " ".join(words[:20]) + "."
-            return spoken_text
+        # If force_full is True or short responses mode is disabled, speak the full text (up to 250 words)
+        if force_full or not getattr(config, "SPEAK_SHORT_RESPONSES_ONLY", True):
+            words = text.split()
+            if len(words) > 250:
+                text = " ".join(words[:250]) + "."
+            return text
 
+        # Short responses mode (default ON) — pick up to 3 concise sentences or max 50 words
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-        selected_sentences = sentences[:2]
+        selected_sentences = sentences[:3] if sentences else [text]
         spoken_text = " ".join(selected_sentences)
         words = spoken_text.split()
-        if len(words) > 35:
-            spoken_text = " ".join(words[:35]) + "."
+        if len(words) > 50:
+            spoken_text = " ".join(words[:50]) + "."
         return spoken_text
 
-    def speak(self, text: str):
+    def speak(self, text: str, force_full: bool = False):
         """Enqueue prepared assistant response for speech synthesis."""
         if not getattr(config, "VOICE_ENABLED", True):
             return
 
-        cleaned_speech = self.prepare_speech_text(text)
+        cleaned_speech = self.prepare_speech_text(text, force_full=force_full)
         if not cleaned_speech:
             return
 

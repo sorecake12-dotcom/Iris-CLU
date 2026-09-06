@@ -288,6 +288,9 @@ def install_dependencies():
         info(f"Installing {display_name} ...")
         result = run([venv_python, "-m", "pip", "install", req_line, "--quiet"])
         if result.returncode != 0:
+            if pkg_name.lower() in ["pyaudio", "tts"]:
+                warn(f"Optional package '{display_name}' could not be installed (C++ compiler or wheel missing). IRIS AI will run without it.")
+                continue
             fail(
                 f"Failed to install package: {display_name}\n\n{result.stderr}",
                 f"Try manually: {pip_exe} install {req_line}"

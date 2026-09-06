@@ -257,6 +257,12 @@ class CommandProcessor:
             if self._handle_natural_language_shortcut(user_input, cmd_lower):
                 return True
 
+            # Real-Time Query Intent: online web search + Gemini summarizer
+            import live_info
+            if live_info.classify_query_intent(user_input) == "REAL_TIME_QUERY":
+                live_info.handle_realtime_query(user_input, self.cli)
+                return True
+
             # Auto-detect coding intent and route to Gemini if matched
             from gemini_engine import detect_coding_intent
             if detect_coding_intent(user_input):
@@ -264,6 +270,7 @@ class CommandProcessor:
             # Otherwise send query to Groq LLM Engine and Windows Automation Engine
             self.process_groq_llm_query(user_input)
             return True
+
 
     def cmd_debug(self):
         config.DEBUG_MODE = not config.DEBUG_MODE
@@ -754,9 +761,13 @@ class CommandProcessor:
 
     def _classify_intent(self, query: str, action_data: dict | None) -> str:
         """Classify user request into structured Intent categories."""
+        import live_info
+        if live_info.classify_query_intent(query) == "REAL_TIME_QUERY":
+            return "Real-Time Information Query"
         q_lower = query.lower()
         if any(w in q_lower for w in ["time", "clock", "date"]):
             return "Current Time"
+
         elif any(w in q_lower for w in ["news", "headline", "headlines"]):
             return "Current News"
         elif any(w in q_lower for w in ["weather", "temperature", "forecast"]):
@@ -835,7 +846,7 @@ class CommandProcessor:
 
             t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
             console.print(Panel(live_text, border_style=t["border"], title=f"[{t['accent']}]✦ LIVE INFORMATION[/{t['accent']}]", padding=(0, 1)))
-            voice_engine.speak(live_text)
+            voice_engine.speak(live_text, force_full=True)
             return
 
         # Direct Query checks for Time, Weather, News if LLM didn't output JSON
@@ -856,28 +867,22 @@ class CommandProcessor:
             import live_info
             n_str = live_info.get_live_news()
             console.print(f"[bold green]{n_str}[/bold green]")
-            voice_engine.speak(n_str)
+            voice_engine.speak(n_str, force_full=True)
             return
 
         # Step 4: Execute Validated Automation Action if present
         if action_intent:
+            if action_intent.get("action") == "send_message":
+                recip = action_intent.get("recipient") or action_intent.get("to") or ""
+                msg = action_intent.get("message") or action_intent.get("text") or ""
+                self._execute_whatsapp_send(recip, msg)
+                return
+
             high_risk, risk_reason = automation_engine.is_high_risk(action_intent)
 
             if high_risk:
                 self.pending_action = action_intent
-                if action_intent.get("action") == "send_message":
-                    recip = action_intent.get("recipient") or action_intent.get("to") or "contact"
-                    t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
-                    console.print(f"[{t['accent']}]IRIS AI > Send this message to {recip}?[/{t['accent']}]\n")
-                    voice_engine.speak(f"Send this message to {recip}?")
-                    automation_engine.execute_action(action_intent, confirmed=False)
                 return
-
-            # Execute action immediately when Auto Send is ON
-            if action_intent.get("action") == "send_message":
-                recip = action_intent.get("recipient") or action_intent.get("to") or "contact"
-                t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
-                console.print(f"[{t['accent']}]Sending to {recip}...[/{t['accent']}]")
 
             exec_result = automation_engine.execute_action(action_intent, confirmed=True)
 
@@ -891,6 +896,55 @@ class CommandProcessor:
                 voice_engine.speak_action_confirm(act, tgt)
             elif exec_result.get("status") == "failed":
                 voice_engine.speak("Action could not be completed.")
+
+    def _execute_whatsapp_send(self, contact: str, message: str) -> bool:
+        """Execute or prompt WhatsApp message send based on WHATSAPP_AUTO_SEND config."""
+        from automation.whatsapp import get_last_whatsapp_contact, set_last_whatsapp_contact
+
+        target_contact = (contact or "").strip()
+        if not target_contact or target_contact.lower() in ["contact", "last", "someone", "anyone"]:
+            target_contact = get_last_whatsapp_contact()
+            if not target_contact:
+                ui.print_error("Please specify a contact to message.")
+                return True
+        else:
+            set_last_whatsapp_contact(target_contact)
+
+        t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+        accent = t["accent"]
+        auto_send_enabled = getattr(config, "WHATSAPP_AUTO_SEND", True)
+
+        if not auto_send_enabled:
+            # Safe Mode: Ask confirmation first
+            self.pending_action = {
+                "action": "send_message",
+                "recipient": target_contact,
+                "message": message,
+                "app": "whatsapp"
+            }
+            console.print(f"[{accent}]IRIS AI > Send this message to {target_contact}?[/{accent}]\n")
+            voice_engine.speak(f"Send this message to {target_contact}?")
+            return True
+
+        # Auto Send ON: Send immediately without confirmation prompt
+        console.print(f"[{accent}]Sending to {target_contact}...[/{accent}]")
+
+        res = automation_engine.execute_action({
+            "action": "send_message",
+            "recipient": target_contact,
+            "message": message,
+            "app": "whatsapp"
+        }, confirmed=True)
+
+        if res.get("status") == "success":
+            console.print(f"[{accent}]IRIS AI >[/{accent}]\n[bold green]✓ Message sent.[/bold green]\n")
+            voice_engine.speak("Message sent.")
+        else:
+            console.print(f"[{accent}]IRIS AI >[/{accent}]\n[bold red]Message failed.[/bold red]\n")
+            voice_engine.speak("I couldn't send the message.")
+
+        return True
+
 
     # =========================================================================
     # NEW COMMAND HANDLERS — Phase 5
@@ -939,6 +993,28 @@ class CommandProcessor:
         Fast-path NLP handler for very obvious intents that don't need LLM.
         Returns True if handled, False to let normal LLM routing continue.
         """
+        # Priority 0: Browser Search Intent Fast-Path
+        from automation.browser import parse_browser_search_query
+        b_match = parse_browser_search_query(user_input)
+        if b_match:
+            engine, query_term = b_match
+            t = config.THEMES.get(self.cli.current_theme, config.THEMES[config.DEFAULT_THEME])
+            accent = t["accent"]
+
+            prov_display = "Stack Overflow" if engine == "stackoverflow" else ("YouTube" if engine == "youtube" else engine.title())
+
+            # Execute browser search action
+            res = automation_engine.execute_action({
+                "action": "browser_search",
+                "engine": engine,
+                "query": query_term
+            }, confirmed=True)
+
+            msg = f"Searching {prov_display} for \"{query_term}\", Boss."
+            console.print(f"[{accent}]IRIS AI >[/{accent}]\n{msg}\n")
+            voice_engine.speak(f"Searching {prov_display} for {query_term}.")
+            return True
+
         # WhatsApp Calling & Messaging Intent Priority Fast-Path
         if "whatsapp" in cmd_lower or any(w in cmd_lower for w in ["call ", "video call", "voice call", "ring "]):
             # Priority 1: Video Call
@@ -992,6 +1068,35 @@ class CommandProcessor:
                 else:
                     console.print(f"[bold red]❌ {res.get('reason', 'I couldn\'t start the WhatsApp call.')}[/bold red]\n")
                 return True
+
+        # WhatsApp Messaging Intent Fast-Path & Follow-Up Contact Memory
+        from automation.whatsapp import get_last_whatsapp_contact
+        last_contact = get_last_whatsapp_contact()
+
+        # Explicit send commands (e.g. "Send hello to Abdullah", "Send hello to GEMS SMP")
+        if any(cmd_lower.startswith(p) for p in ["send ", "message ", "text ", "write to ", "whatsapp "]) and not any(w in cmd_lower for w in ["call", "video", "voice", "settings", "mode", "file", "folder"]):
+            if " to " in cmd_lower:
+                parts = user_input.split(" to ", 1)
+                msg_part = parts[0]
+                for p in ["send ", "message ", "text ", "write ", "whatsapp "]:
+                    if msg_part.lower().startswith(p):
+                        msg_part = msg_part[len(p):].strip()
+                        break
+                contact = parts[1].strip().title()
+                msg = msg_part.strip()
+                if contact and msg:
+                    return self._execute_whatsapp_send(contact, msg)
+
+        # Follow-up message commands when a last contact is remembered (e.g. "anyone want to play")
+        if last_contact and not any(cmd_lower.startswith(p) for p in ["/", "open ", "close ", "play ", "search ", "what", "how", "who", "why", "where", "take ", "remember ", "forget "]):
+            msg = user_input.strip()
+            for p in ["send ", "tell ", "say "]:
+                if msg.lower().startswith(p):
+                    msg = msg[len(p):].strip()
+                    break
+            if msg and len(msg) > 1:
+                return self._execute_whatsapp_send(last_contact, msg)
+
         # Clipboard quick reads
         if cmd_lower in ["what's on my clipboard", "read clipboard", "show clipboard", "clipboard"]:
             from clipboard_engine import clipboard_engine

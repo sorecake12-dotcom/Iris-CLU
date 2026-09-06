@@ -21,9 +21,10 @@ from rich.console import Console
 
 import config
 from app_discovery import find_app_path, find_all_matching_apps, find_desktop_item
-from spotify_automation import play_spotify, bring_spotify_to_foreground, is_spotify_running
-from whatsapp_automation import open_messaging_app, automate_whatsapp_message
-from browser_automation import open_multiple_websites, browser_search, execute_tab_action, fill_form_text
+from automation.spotify import play_spotify, bring_spotify_to_foreground, is_spotify_running
+from automation.whatsapp import open_messaging_app, automate_whatsapp_message
+from automation.browser import open_multiple_websites, browser_search, execute_tab_action, fill_form_text
+
 from debug_logger import debug_log, log_json_payload, log_exception
 from file_engine import file_engine, resolve_path as fe_resolve
 from window_manager import window_manager
@@ -210,6 +211,7 @@ class WindowsAutomationEngine:
         r.register("open_urls", self._handle_open_urls)
         r.register("open_url", self._handle_open_website)
         r.register("web_search", self._handle_web_search)
+        r.register("browser_search", self._handle_web_search)
         r.register("play_spotify", self._handle_play_spotify)
         r.register("send_message", self._handle_send_message)
         r.register("open_desktop_item", self._handle_open_desktop_item)
@@ -375,7 +377,7 @@ class WindowsAutomationEngine:
         # Keyword prefix: e.g. "desktop/myfile.txt" or "desktop\myfile.txt"
         for kw, folder in keyword_map.items():
             if key.startswith(kw + "/") or key.startswith(kw + "\\"):
-                rest = raw_path[len(kw):].lstrip("\/")
+                rest = raw_path[len(kw):].lstrip("/\\")
                 return folder / rest
 
         # Explicit path — expand ~ and resolve
@@ -476,11 +478,14 @@ class WindowsAutomationEngine:
         return open_multiple_websites(urls)
 
     def _handle_web_search(self, data: dict) -> str:
-        query = data.get("query") or data.get("target")
-        engine = data.get("engine", "google")
+        query = data.get("query") or data.get("search_query") or data.get("target") or ""
+        engine = data.get("engine") or data.get("provider") or data.get("target_engine") or "google"
         if not query:
             raise ValueError("No search query specified.")
-        return browser_search(engine, query)
+        res = browser_search(engine, query)
+        if isinstance(res, dict):
+            return res.get("details", f"Searching {engine} for '{query}'.")
+        return str(res)
 
     # 5. File System & Search
     def _handle_create_file(self, data: dict) -> str:
