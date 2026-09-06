@@ -107,11 +107,21 @@ class IrisCLI:
         console.print(f"[{accent}]IRIS AI >[/{accent}]")
         console.print("Hey Boss! What would you like me to do today?\n")
 
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        def _(event):
+            voice_engine.stop_speech()
+            console.print("\n[dim yellow]⏹ [AUDIO MUTED BY ESC KEY][/dim yellow]")
+
         # Initialize PromptSession
         session = PromptSession(
             history=self.history,
             completer=self.get_completer(),
-            complete_while_typing=False
+            complete_while_typing=False,
+            key_bindings=kb
         )
 
         running = True

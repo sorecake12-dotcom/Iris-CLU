@@ -73,6 +73,28 @@ class VoiceEngine:
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
 
+        # 5. Start background ESC key listener for instant speech interrupt
+        self.esc_thread = threading.Thread(target=self._esc_listener_loop, daemon=True)
+        self.esc_thread.start()
+
+    def _esc_listener_loop(self):
+        """Monitors ESC key press on Windows to instantly interrupt speech playback."""
+        if sys.platform != "win32":
+            return
+        import ctypes
+        while True:
+            try:
+                if self.is_playing or not self.speech_queue.empty():
+                    # VK_ESCAPE = 0x1B
+                    if ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000:
+                        if not self.interrupt_event.is_set():
+                            self.stop_speech()
+                            console.print("\n[dim yellow]⏹ [AUDIO MUTED BY ESC KEY][/dim yellow]")
+                            time.sleep(0.3)
+                time.sleep(0.04)
+            except Exception:
+                time.sleep(0.2)
+
     def _init_cloning_backend(self):
         """Initialize XTTS v2 or local voice-cloning model if available."""
         try:
